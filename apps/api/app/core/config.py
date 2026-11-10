@@ -1,0 +1,41 @@
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    environment: str = "development"
+    database_url: str = "sqlite:///./travelos.db"
+    jwt_secret: str = "dev-only-change-me"
+    jwt_ttl_days: int = 30
+    token_encryption_key: str | None = None
+    cors_origins: str = "*"
+
+    supabase_jwt_secret: str | None = None
+
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str = "http://localhost:8000/api/v1/integrations/gmail/callback"
+
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    ai_daily_request_limit: int = 30
+
+    upload_dir: str = "./var/uploads"
+    gmail_sync_limit: int = 60
+
+    def cors_list(self) -> list[str]:
+        if self.cors_origins.strip() == "*":
+            return ["*"]
+        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    def ensure_production_safe(self) -> None:
+        if self.environment == "production" and self.jwt_secret == "dev-only-change-me":
+            raise RuntimeError("Set JWT_SECRET before running in production.")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

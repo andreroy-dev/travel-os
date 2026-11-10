@@ -1,0 +1,74 @@
+import { useFonts } from 'expo-font';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { useEffect } from 'react';
+import { Platform, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+import SignInScreen from '@/app/sign-in';
+import { serif, theme } from '@/components/ui';
+import { useSession, SessionProvider } from '@/lib/session';
+
+export { ErrorBoundary } from 'expo-router';
+
+SplashScreen.preventAutoHideAsync();
+
+export default function RootLayout() {
+  const [loaded, error] = useFonts({
+    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+  });
+
+  useEffect(() => {
+    if (error) throw error;
+  }, [error]);
+
+  useEffect(() => {
+    if (loaded) SplashScreen.hideAsync();
+  }, [loaded]);
+
+  if (!loaded) return null;
+
+  return (
+    <SafeAreaProvider>
+    <SessionProvider>
+      <View
+        style={{
+          flex: 1,
+          width: '100%',
+          minHeight: Platform.OS === 'web' ? '100vh' : undefined,
+          backgroundColor: theme.paper,
+        }}>
+        <RootNavigator />
+      </View>
+    </SessionProvider>
+    </SafeAreaProvider>
+  );
+}
+
+function RootNavigator() {
+  const { ready, token } = useSession();
+  if (!ready) return <View style={{ flex: 1, backgroundColor: theme.paper }} />;
+  if (!token) return <SignInScreen />;
+
+  return (
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: theme.paper },
+          headerShadowVisible: false,
+          headerTintColor: theme.ink,
+          headerTitleStyle: { fontFamily: serif, fontSize: 18 },
+          contentStyle: { backgroundColor: theme.paper },
+          headerBackTitle: Platform.OS === 'ios' ? 'Back' : undefined,
+        }}>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+        <Stack.Screen name="new-space" options={{ title: 'New space' }} />
+        <Stack.Screen name="spaces/[id]" options={{ headerShown: false }} />
+        <Stack.Screen name="soon" options={{ title: 'Coming later' }} />
+        <Stack.Screen name="new-booking" options={{ title: 'Add booking' }} />
+        <Stack.Screen name="import-confirmation" options={{ title: 'Import' }} />
+        <Stack.Screen name="gmail" options={{ title: 'Gmail' }} />
+        <Stack.Screen name="bookings/[id]" options={{ title: 'Booking' }} />
+      </Stack>
+  );
+}
