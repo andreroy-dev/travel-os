@@ -1,4 +1,20 @@
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:8000';
+import Constants from 'expo-constants';
+
+const API_PORT = 8002;
+
+/**
+ * On a phone, call the API on the same computer Expo Go just connected to.
+ * That address follows the current Wi-Fi, so the app does not store a LAN IP.
+ * EXPO_PUBLIC_API_URL is only the fallback for web and for a build with no dev server.
+ */
+function apiBase(): string {
+  const hostUri = Constants.expoConfig?.hostUri;
+  const host = hostUri?.split(':')[0];
+  if (host && host !== 'localhost' && host !== '127.0.0.1') {
+    return `http://${host}:${API_PORT}`;
+  }
+  return process.env.EXPO_PUBLIC_API_URL ?? `http://127.0.0.1:${API_PORT}`;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -25,7 +41,7 @@ export async function api<T>(path: string, options: Options = {}): Promise<T> {
   }
   let response: Response;
   try {
-    response = await fetch(`${API_URL}/api/v1${path}`, {
+    response = await fetch(`${apiBase()}/api/v1${path}`, {
       method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
