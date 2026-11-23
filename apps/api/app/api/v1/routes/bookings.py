@@ -5,8 +5,16 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.api.ownership import owned
-from app.models.entities import Booking, TravelSpace
-from app.schemas import BookingIn, BookingOut, reject_large_details
+from app.core.errors import AppError
+from app.models.entities import Booking, EmailRecord, TravelSpace
+from app.schemas import (
+    BookingDetailOut,
+    BookingIn,
+    BookingOut,
+    BookingPatch,
+    BookingSourceOut,
+    reject_large_details,
+)
 from app.services.booking_details import field_catalog
 from app.services.itinerary_sync import sync_booking_itinerary
 from app.services.validation import ensure_currency, ensure_datetime_order, ensure_timezone
@@ -69,19 +77,59 @@ def create_booking(payload: BookingIn, user: CurrentUser, session: DbSession) ->
     return booking
 
 
-@router.get("/bookings/{booking_id}", response_model=BookingOut)
-def read_booking(booking_id: UUID, user: CurrentUser, session: DbSession) -> Booking:
-    return owned(session, Booking, booking_id, user.id)
+def _source_url(external_id: str) -> str | None:
+    # Gmail message ids are stored as "gmail:<id>"; this opens the original message.
+    if external_id.startswith("gmail:"):
+        return f"https://mail.google.com/mail/u/0/#all/{external_id.removeprefix('gmail:')}"
+    return None
+
+
+@router.get("/bookings/{booking_id}", response_model=BookingDetailOut)
+def read_booking(booking_id: UUID, user: CurrentUser, session: DbSession) -> BookingDetailOut:
+    booking = owned(session, Booking, booking_id, user.id)
+    emails = session.scalars(
+        select(EmailRecord)
+        .where(EmailRecord.user_id == user.id, EmailRecord.booking_id == booking.id)
+        .order_by(EmailRecord.received_at)
+    ).all()
+    out = BookingDetailOut.model_validate(booking, from_attributes=True)
+    out.sources = [
+        BookingSourceOut(
+            kind=email.external_id.split(":", 1)[0] if ":" in email.external_id else "email",
+            subject=email.subject,
+            received_at=email.received_at,
+            url=_source_url(email.external_id),
+        )
+        for email in emails
+    ]
+    return out
 
 
 @router.patch("/bookings/{booking_id}", response_model=BookingOut)
 def update_booking(
-    booking_id: UUID, payload: BookingIn, user: CurrentUser, session: DbSession
+    booking_id: UUID, payload: BookingPatch, user: CurrentUser, session: DbSession
 ) -> Booking:
     booking = owned(session, Booking, booking_id, user.id)
-    if payload.travel_space_id is not None:
+    sent = payload.model_fields_set
+    if "travel_space_id" in sent and payload.travel_space_id is not None:
         owned(session, TravelSpace, payload.travel_space_id, user.id)
-    _apply(booking, payload)
+    for required in ("category", "provider", "status"):
+        if required in sent and getattr(payload, required) is None:
+            raise AppError(422, f"{required.replace('_', ' ').capitalize()} cannot be empty.")
+    if "details" in sent:
+        reject_large_details(payload.details)
+    for name in sent:
+        value = getattr(payload, name)
+        if name == "provider":
+            value = value.strip()
+        elif name == "confirmation_reference":
+            value = value.strip().upper() if value else None
+        elif name == "timezone":
+            value = ensure_timezone(value)
+        elif name == "price_currency":
+            value = ensure_currency(value)
+        setattr(booking, name, value)
+    ensure_datetime_order(booking.starts_at, booking.ends_at)
     sync_booking_itinerary(session, booking)
     session.commit()
     session.refresh(booking)

@@ -3,11 +3,14 @@ import Constants from 'expo-constants';
 const API_PORT = 8002;
 
 /**
- * On a phone, call the API on the same computer Expo Go just connected to.
- * That address follows the current Wi-Fi, so the app does not store a LAN IP.
- * EXPO_PUBLIC_API_URL is only the fallback for web and for a build with no dev server.
+ * EXPO_PUBLIC_API_URL wins when set: scripts/dev-remote.sh sets it to the
+ * public tunnel so the phone works on any network.
+ * Otherwise, on a phone, call the API on the same computer Expo Go connected to
+ * (that follows the current Wi-Fi, so no LAN IP is stored).
  */
 function apiBase(): string {
+  const configured = process.env.EXPO_PUBLIC_API_URL;
+  if (configured) return configured.replace(/\/$/, '');
   const hostUri = Constants.expoConfig?.hostUri;
   const host = hostUri?.split(':')[0];
   if (host && host !== 'localhost' && host !== '127.0.0.1') {

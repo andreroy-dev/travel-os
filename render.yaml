@@ -1,0 +1,33 @@
+# Render Blueprint for the Travel OS API (https://render.com/docs/blueprint-spec).
+# Database: Supabase Postgres. Paste its connection string into DATABASE_URL
+# (use the postgresql+psycopg:// scheme). Secrets marked sync: false are entered in the Render dashboard.
+services:
+  - type: web
+    name: travel-os-api
+    runtime: docker
+    rootDir: apps/api
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

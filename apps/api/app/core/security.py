@@ -15,6 +15,7 @@ class TokenIdentity:
     supabase_user_id: str | None
     email: str | None = None
     display_name: str | None = None
+    email_verified: bool = False
 
 
 def create_access_token(user_id: uuid.UUID, purpose: str = "access", return_to: str | None = None) -> str:
@@ -59,23 +60,47 @@ def decode_access_token(token: str, purpose: str = "access") -> TokenIdentity:
     return TokenIdentity(user_id=user_id, supabase_user_id=None)
 
 
-def _decode_supabase(token: str) -> TokenIdentity:
+_jwks_client: "jwt.PyJWKClient | None" = None
+
+
+def _supabase_payload(token: str) -> dict | None:
+    """Verify a Supabase access token.
+
+    Newer Supabase projects sign with asymmetric keys published at
+    <SUPABASE_URL>/auth/v1/.well-known/jwks.json; older ones use the shared
+    HS256 JWT secret. Both are accepted; audience must be "authenticated".
+    """
+    global _jwks_client
     settings = get_settings()
-    if not settings.supabase_jwt_secret:
-        raise AppError(401, "Sign in again.")
-    payload = None
-    last_error: Exception | None = None
-    for kwargs in (
-        {"audience": "authenticated"},
-        {"options": {"verify_aud": False}},
-    ):
-        try:
-            payload = jwt.decode(token, settings.supabase_jwt_secret, algorithms=["HS256"], **kwargs)
-            break
-        except jwt.PyJWTError as exc:
-            last_error = exc
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError:
+        return None
+    try:
+        if header.get("alg") == "HS256":
+            if not settings.supabase_jwt_secret:
+                return None
+            return jwt.decode(
+                token, settings.supabase_jwt_secret, algorithms=["HS256"], audience="authenticated"
+            )
+        if not settings.supabase_url:
+            return None
+        if _jwks_client is None:
+            _jwks_client = jwt.PyJWKClient(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json", cache_keys=True
+            )
+        key = _jwks_client.get_signing_key_from_jwt(token)
+        return jwt.decode(
+            token, key.key, algorithms=["ES256", "RS256"], audience="authenticated"
+        )
+    except jwt.PyJWTError:
+        return None
+
+
+def _decode_supabase(token: str) -> TokenIdentity:
+    payload = _supabase_payload(token)
     if payload is None or "sub" not in payload:
-        raise AppError(401, "Sign in again.") from last_error
+        raise AppError(401, "Sign in again.")
     metadata = payload.get("user_metadata") or {}
     name = metadata.get("full_name") or metadata.get("name")
     return TokenIdentity(
@@ -83,6 +108,8 @@ def _decode_supabase(token: str) -> TokenIdentity:
         supabase_user_id=str(payload["sub"]),
         email=payload.get("email"),
         display_name=name,
+        # Email OTP, Apple and Google all confirm the address before issuing a session.
+        email_verified=bool(payload.get("email")) and metadata.get("email_verified", True) is not False,
     )
 
 

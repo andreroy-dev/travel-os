@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { Platform } from 'react-native';
 
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import type { User } from '@/lib/types';
 
 const TOKEN_KEY = 'travelos.token';
@@ -11,7 +12,10 @@ type SessionValue = {
   ready: boolean;
   token: string | null;
   user: User | null;
+  /** Developer email-only sign-in (servers in development mode only). */
   signIn: (email: string, displayName: string) => Promise<void>;
+  /** True when the app was built with Supabase keys (real sign-in). */
+  realAuth: boolean;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
 };
@@ -83,9 +87,39 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Real sign-in: the Supabase session's access token is what the API accepts.
+  useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+    const apply = async (accessToken: string | null) => {
+      if (!active) return;
+      if (!accessToken) return;
+      setToken(accessToken);
+      try {
+        setUser(await api<User>('/users/me', { token: accessToken }));
+      } catch {
+        // Keep the session; the next screen load will show the error.
+      }
+      if (active) setReady(true);
+    };
+    supabase.auth.getSession().then(({ data }) => apply(data.session?.access_token ?? null));
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setToken(null);
+        setUser(null);
+        return;
+      }
+      void apply(session?.access_token ?? null);
+    });
+    return () => {
+      active = false;
+      data.subscription.unsubscribe();
+    };
+  }, []);
+
   const signIn = useCallback(async (email: string, displayName: string) => {
     const result = await api<{ access_token: string }>('/auth/dev-login', {
-      body: { email: email.trim(), display_name: displayName.trim() },
+      body: { email: email.trim(), display_name: displayName.trim()},
     });
     await writeToken(result.access_token);
     setToken(result.access_token);
@@ -93,13 +127,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    if (supabase) await supabase.auth.signOut().catch(() => undefined);
     await writeToken(null);
     setToken(null);
     setUser(null);
   }, []);
 
   const value = useMemo(
-    () => ({ ready, token, user, signIn, signOut, refreshUser }),
+    () => ({ ready, token, user, signIn, signOut, refreshUser, realAuth: supabase !== null }),
     [ready, token, user, signIn, signOut, refreshUser],
   );
 

@@ -1,15 +1,22 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Button, ErrorNote, Field, Screen, theme } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { COUNTRIES } from '@/lib/countries';
 import { useSession } from '@/lib/session';
+import type { TravelSpace } from '@/lib/types';
 
 const kinds = ['holiday', 'long_stay', 'relocation', 'open_ended', 'business', 'other'] as const;
 const statuses = ['planning', 'upcoming', 'active', 'paused', 'completed'] as const;
+
+function fromIso(value: string | null): Date | null {
+  if (!value) return null;
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
 
 function iso(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -20,6 +27,9 @@ function iso(date: Date) {
 export default function NewSpaceScreen() {
   const { token } = useSession();
   const router = useRouter();
+  const { id } = useLocalSearchParams<{ id?: string }>();
+  const editing = Boolean(id);
+  const [wasArchived, setWasArchived] = useState(false);
   const [title, setTitle] = useState('');
   const [destination, setDestination] = useState('');
   const [country, setCountry] = useState<{ code: string; name: string } | null>(null);
@@ -40,17 +50,36 @@ export default function NewSpaceScreen() {
     return COUNTRIES.filter((item) => item.name.toLowerCase().includes(query) || item.code.toLowerCase().includes(query));
   }, [countryQuery]);
 
+  useEffect(() => {
+    if (!token || !id) return;
+    api<TravelSpace>(`/travel-spaces/${id}`, { token })
+      .then((space) => {
+        setTitle(space.title);
+        setDestination(space.destination_name ?? '');
+        const match = COUNTRIES.find((item) => item.code === space.country_code);
+        setCountry(match ?? null);
+        setStart(fromIso(space.start_date));
+        setEnd(fromIso(space.end_date));
+        setSummary(space.summary ?? '');
+        setKind(space.kind as (typeof kinds)[number]);
+        if ((statuses as readonly string[]).includes(space.status)) setStatus(space.status as (typeof statuses)[number]);
+        setWasArchived(space.status === 'archived');
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load this space.'));
+  }, [token, id]);
+
   async function save() {
     if (!token) return;
     setBusy(true);
     setError(null);
     try {
-      await api('/travel-spaces', {
+      await api(editing ? `/travel-spaces/${id}` : '/travel-spaces', {
         token,
+        method: editing ? 'PATCH' : 'POST',
         body: {
           title,
           kind,
-          status,
+          status: wasArchived ? undefined : status,
           destination_name: destination.trim() || null,
           country_code: country?.code ?? null,
           start_date: start ? iso(start) : null,
@@ -68,6 +97,7 @@ export default function NewSpaceScreen() {
 
   return (
     <Screen>
+      <Stack.Screen options={{ title: editing ? 'Edit space' : 'New space' }} />
       <Field label="Title" value={title} onChangeText={setTitle} placeholder="Six weeks in Lisbon" />
       <Field label="Destination" value={destination} onChangeText={setDestination} placeholder="Lisbon" />
       <Text style={styles.label}>Country</Text>
@@ -112,7 +142,7 @@ export default function NewSpaceScreen() {
       <Pills label="Kind" options={kinds} value={kind} onChange={setKind} />
       <Pills label="Status" options={statuses} value={status} onChange={setStatus} />
       <ErrorNote message={error} />
-      <Button label="Save space" onPress={save} busy={busy} />
+      <Button label={editing ? 'Save changes' : 'Save space'} onPress={save} busy={busy} />
       <Modal visible={countryOpen} animationType="slide" onRequestClose={() => setCountryOpen(false)}>
         <View style={styles.modal}>
           <Text style={styles.modalTitle}>Country</Text>

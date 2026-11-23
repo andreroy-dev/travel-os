@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
 
     supabase_jwt_secret: str | None = None
+    supabase_url: str | None = None
+    # Dev email-only sign-in. Turned off automatically in production.
+    dev_login_enabled: bool = True
 
     google_client_id: str | None = None
     google_client_secret: str | None = None
@@ -34,6 +37,8 @@ class Settings(BaseSettings):
     def ensure_production_safe(self) -> None:
         if self.environment == "production" and self.jwt_secret == "dev-only-change-me":
             raise RuntimeError("Set JWT_SECRET before running in production.")
+        if self.environment == "production" and not (self.supabase_url or self.supabase_jwt_secret):
+            raise RuntimeError("Set SUPABASE_URL (or SUPABASE_JWT_SECRET) before running in production.")
 
 
 @lru_cache

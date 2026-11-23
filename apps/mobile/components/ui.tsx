@@ -77,12 +77,14 @@ export function Field({
   onChangeText,
   placeholder,
   multiline,
+  secure,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
   multiline?: boolean;
+  secure?: boolean;
 }) {
   return (
     <View style={styles.field}>
@@ -94,6 +96,8 @@ export function Field({
         placeholderTextColor="#a3988b"
         autoCapitalize="none"
         multiline={multiline}
+        secureTextEntry={secure}
+        autoCorrect={secure ? false : undefined}
         style={[styles.input, multiline && styles.multiline]}
       />
     </View>

@@ -1,18 +1,30 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { DateField, isoDate } from '@/components/DateField';
-import { Button, ErrorNote, Field, Muted, Screen, theme } from '@/components/ui';
-import { ApiError, api, optionalDate } from '@/lib/api';
+import { Button, ErrorNote, Muted, Screen, theme } from '@/components/ui';
+import { SpaceCalendar } from '@/components/SpaceCalendar';
+import { SpacePlaces } from '@/components/SpacePlaces';
+import { ApiError, api } from '@/lib/api';
+import { bookingSections } from '@/lib/bookingFields';
+import { confirmAction } from '@/lib/confirm';
+import { prettyDay, weekday } from '@/lib/dates';
 import { useSession } from '@/lib/session';
-import { categoryLabels } from '@/lib/bookingFields';
-import type { Booking, IngestResult, Integration, ItineraryItem, SavedPlace, Stay, TravelSpace } from '@/lib/types';
+import type {
+  Booking,
+  CoverageNight,
+  IngestResult,
+  Integration,
+  ItineraryItem,
+  StayCoverage,
+  StayGap,
+  StayMove,
+  TravelSpace,
+} from '@/lib/types';
 
-const tabs = ['Itinerary', 'Bookings', 'Photos', 'Budget', 'Docs'] as const;
+const tabs = ['Itinerary', 'Calendar', 'Bookings', 'Places', 'Photos', 'Budget', 'Docs'] as const;
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const categoryOrder = ['flight', 'accommodation', 'train', 'bus', 'car_rental', 'transfer', 'activity', 'restaurant', 'cruise', 'insurance', 'other'];
 
 function dates(space: TravelSpace) {
   if (!space.start_date && !space.end_date) return 'Dates not set';
@@ -39,23 +51,17 @@ function bookingRange(booking: Booking) {
   return start || end;
 }
 
-function groupByDay(items: ItineraryItem[]) {
-  const groups = new Map<string, ItineraryItem[]>();
-  for (const item of items) {
-    const key = item.starts_on || 'unscheduled';
-    groups.set(key, [...(groups.get(key) ?? []), item]);
+function tripDays(start: string, end: string) {
+  const days: string[] = [];
+  const cursor = new Date(`${start}T00:00:00`);
+  const last = new Date(`${end}T00:00:00`);
+  while (cursor <= last && days.length < 62) {
+    const month = String(cursor.getMonth() + 1).padStart(2, '0');
+    const day = String(cursor.getDate()).padStart(2, '0');
+    days.push(`${cursor.getFullYear()}-${month}-${day}`);
+    cursor.setDate(cursor.getDate() + 1);
   }
-  return [...groups.entries()];
-}
-
-function groupBookings(bookings: Booking[]) {
-  const groups = new Map<string, Booking[]>();
-  for (const booking of bookings) {
-    groups.set(booking.category, [...(groups.get(booking.category) ?? []), booking]);
-  }
-  return [...groups.entries()].sort(
-    (left, right) => categoryOrder.indexOf(left[0]) - categoryOrder.indexOf(right[0]),
-  );
+  return days;
 }
 
 export default function SpaceDetailScreen() {
@@ -65,19 +71,9 @@ export default function SpaceDetailScreen() {
   const [space, setSpace] = useState<TravelSpace | null>(null);
   const [items, setItems] = useState<ItineraryItem[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [stays, setStays] = useState<Stay[]>([]);
-  const [places, setPlaces] = useState<SavedPlace[]>([]);
+  const [coverage, setCoverage] = useState<StayCoverage | null>(null);
   const [tab, setTab] = useState<(typeof tabs)[number]>('Itinerary');
   const [day, setDay] = useState<string | null>(null);
-  const [stayTitle, setStayTitle] = useState('');
-  const [stayStart, setStayStart] = useState('');
-  const [stayEnd, setStayEnd] = useState('');
-  const [placeName, setPlaceName] = useState('');
-  const [origin, setOrigin] = useState('');
-  const [destination, setDestination] = useState('');
-  const [mode, setMode] = useState('flight');
-  const [depart, setDepart] = useState<Date | null>(null);
-  const [arrive, setArrive] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [gmail, setGmail] = useState<string>('disconnected');
@@ -87,19 +83,17 @@ export default function SpaceDetailScreen() {
     if (!token || !id) return;
     setRefreshing(true);
     try {
-      const [nextSpace, nextStays, nextBookings, nextPlaces, plan, integration] = await Promise.all([
+      const [nextSpace, nextBookings, plan, integration, nextCoverage] = await Promise.all([
         api<TravelSpace>(`/travel-spaces/${id}`, { token }),
-        api<Stay[]>(`/travel-spaces/${id}/stays`, { token }),
         api<Booking[]>(`/bookings?travel_space_id=${id}`, { token }),
-        api<SavedPlace[]>(`/saved-places?travel_space_id=${id}`, { token }),
         api<{ items: ItineraryItem[] }>(`/itinerary?view=chronological&travel_space_id=${id}`, { token }),
         api<Integration>('/integrations/gmail', { token }),
+        api<StayCoverage>(`/travel-spaces/${id}/coverage`, { token }),
       ]);
       setGmail(integration.status);
+      setCoverage(nextCoverage);
       setSpace(nextSpace);
-      setStays(nextStays);
       setBookings(nextBookings);
-      setPlaces(nextPlaces);
       setItems(plan.items ?? []);
       setError(null);
     } catch (err) {
@@ -135,77 +129,75 @@ export default function SpaceDetailScreen() {
     }
   }
 
-  const days = [...new Set(items.map((item) => item.starts_on).filter((value): value is string => Boolean(value)))];
-  const visible = items.filter((item) => (day ? item.starts_on === day : true));
+  const days = space?.start_date && space.end_date
+    ? tripDays(space.start_date, space.end_date)
+    : [...new Set(items.map((item) => item.starts_on).filter((value): value is string => Boolean(value)))];
+  const visibleDays = day ? days.filter((value) => value === day) : days;
 
-  async function addStay() {
-    if (!token || !id || !stayTitle.trim()) return;
-    try {
-      await api('/stays', {
-        token,
-        body: {
-          travel_space_id: id,
-          title: stayTitle,
-          destination_name: space?.destination_name,
-          start_date: optionalDate(stayStart),
-          end_date: optionalDate(stayEnd),
-        },
-      });
-      setStayTitle('');
-      setStayStart('');
-      setStayEnd('');
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add the stay.');
-    }
-  }
-
-  async function addPlace() {
-    if (!token || !id || !placeName.trim()) return;
-    try {
-      await api('/saved-places', {
-        token,
-        body: { name: placeName, travel_space_id: id, destination_name: space?.destination_name },
-      });
-      setPlaceName('');
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the place.');
-    }
-  }
-
-  async function addJourney() {
-    if (!token || !id || !origin.trim() || !destination.trim()) return;
-    try {
-      await api('/journeys', {
-        token,
-        body: {
-          travel_space_id: id,
-          origin_label: origin,
-          destination_label: destination,
-          mode,
-          depart_on: depart ? isoDate(depart) : null,
-          arrive_on: arrive ? isoDate(arrive) : null,
-        },
-      });
-      setOrigin('');
-      setDestination('');
-      setDepart(null);
-      setArrive(null);
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add the journey.');
-    }
-  }
+  const nightByDate = new Map<string, CoverageNight>((coverage?.nights ?? []).map((night) => [night.date, night]));
+  const gapByStart = new Map<string, StayGap>((coverage?.gaps ?? []).map((gap) => [gap.start, gap]));
+  const moveByDate = new Map<string, StayMove>((coverage?.moves ?? []).map((move) => [move.date, move]));
+  const archived = space?.status === 'archived';
 
   async function archive() {
-    if (!token || !id) return;
+    if (!token || !id || !space) return;
+    const ok = await confirmAction(
+      'Archive this space?',
+      `"${space.title}" will move to Archived in Travel Spaces. Bookings and itinerary are kept, and you can restore it at any time.`,
+      'Archive',
+    );
+    if (!ok) return;
     try {
-      await api(`/travel-spaces/${id}`, { method: 'DELETE', token });
-      router.back();
+      await api(`/travel-spaces/${id}/archive`, { method: 'POST', token, body: {} });
+      if (router.canGoBack()) router.back();
+      else router.replace('/trips');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not archive this space.');
     }
+  }
+
+  async function restore() {
+    if (!token || !id) return;
+    try {
+      setSpace(await api<TravelSpace>(`/travel-spaces/${id}/restore`, { method: 'POST', token, body: {} }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not restore this space.');
+    }
+  }
+
+  async function removeStay(night: CoverageNight) {
+    if (!token || !night.stay_id) return;
+    const ok = await confirmAction('Remove this stay?', `"${night.title}" will be taken off your itinerary.`, 'Remove');
+    if (!ok) return;
+    try {
+      await api(`/stays/${night.stay_id}`, { method: 'DELETE', token });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not remove this stay.');
+    }
+  }
+
+  async function removeJourney(item: ItineraryItem) {
+    if (!token || !item.journey_id) return;
+    const ok = await confirmAction('Remove this journey?', `"${item.title}" will be taken off your itinerary.`, 'Remove');
+    if (!ok) return;
+    try {
+      await api(`/journeys/${item.journey_id}`, { method: 'DELETE', token });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not remove this journey.');
+    }
+  }
+
+  function addJourney(move?: StayMove) {
+    router.push({
+      pathname: '/add-journey',
+      params: move ? { spaceId: id, date: move.date, from: move.from_title, to: move.to_title } : { spaceId: id },
+    });
+  }
+
+  function addStay(gap: StayGap) {
+    router.push({ pathname: '/add-stay', params: { spaceId: id, start: gap.start, end: gap.end } });
   }
 
   return (
@@ -219,6 +211,13 @@ export default function SpaceDetailScreen() {
           {space ? `${space.status} · ${dates(space)}` : ' '}
         </Text>
       </View>
+      {archived ? (
+        <View style={styles.archivedNote}>
+          <Text style={styles.itemTitle}>This space is archived</Text>
+          <Muted>It is hidden from your trips. Everything inside it is still here.</Muted>
+          <Button label="Restore to active spaces" onPress={restore} />
+        </View>
+      ) : null}
       <View style={styles.tabs}>
         {tabs.map((item) => (
           <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.tabOn]}>
@@ -235,7 +234,7 @@ export default function SpaceDetailScreen() {
 
       {tab === 'Itinerary' ? (
         <>
-          <View style={styles.days}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.days}>
             <Pressable onPress={() => setDay(null)} style={[styles.day, day === null && styles.dayOn]}>
               <Text style={[styles.dayLabel, day === null && styles.dayLabelOn]}>All</Text>
             </Pressable>
@@ -244,57 +243,106 @@ export default function SpaceDetailScreen() {
                 <Text style={[styles.dayLabel, day === value && styles.dayLabelOn]}>{value.slice(5)}</Text>
               </Pressable>
             ))}
-          </View>
-          {visible.length === 0 ? <Muted>Nothing on the itinerary yet.</Muted> : null}
-          {groupByDay(visible).map(([dayKey, dayItems]) => (
-            <View key={dayKey} style={styles.group}>
-              <Text style={styles.section}>{dayKey === 'unscheduled' ? 'Unscheduled' : prettyDate(dayKey)}</Text>
-              {dayItems.map((item) => (
-                <Pressable
-                  key={item.id}
-                  disabled={!item.booking_id}
-                  onPress={() => item.booking_id && router.push({ pathname: '/bookings/[id]', params: { id: item.booking_id } })}
-                  style={styles.item}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.itemTitle}>{item.title}</Text>
-                    <Muted>
-                      {[item.location_label, item.kind.replaceAll('_', ' '), item.status === 'confirmed' ? 'Confirmed' : 'Planned']
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Muted>
-                  </View>
-                  <Text style={styles.clock}>{clockLabel(item.starts_at)}</Text>
-                </Pressable>
-              ))}
+          </ScrollView>
+          {coverage && coverage.total_nights > 0 ? (
+            <View style={[styles.summary, coverage.gaps.length > 0 && styles.summaryWarn]}>
+              <Text style={styles.itemTitle}>
+                {coverage.covered_nights} of {coverage.total_nights} nights sorted
+              </Text>
+              <Muted>
+                {coverage.gaps.length === 0
+                  ? 'You have somewhere to stay every night of this trip.'
+                  : coverage.gaps
+                      .map((gap) => `${prettyDay(gap.start)} → ${prettyDay(gap.end)} (${gap.nights} ${gap.nights === 1 ? 'night' : 'nights'})`)
+                      .join(' · ') + ' still open'}
+              </Muted>
             </View>
-          ))}
-          <View style={styles.actions}>
-            <Button label="Add booking" onPress={() => router.push({ pathname: '/new-booking', params: { space: id } })} />
-            <Button label="View on map" tone="quiet" onPress={() => router.push({ pathname: '/soon', params: { name: 'Map' } })} />
-          </View>
-          <Text style={styles.section}>Journey</Text>
-          <Muted>A journey is the move between places. It shows on this itinerary once you save it.</Muted>
-          <Field label="From" value={origin} onChangeText={setOrigin} placeholder="Colombo" />
-          <Field label="To" value={destination} onChangeText={setDestination} placeholder="Munich" />
-          <View style={styles.days}>
-            {['flight', 'train', 'bus', 'car', 'other'].map((option) => (
-              <Pressable key={option} onPress={() => setMode(option)} style={[styles.day, mode === option && styles.dayOn]}>
-                <Text style={[styles.dayLabel, mode === option && styles.dayLabelOn]}>{option}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <DateField label="Departs" value={depart} onChange={setDepart} placeholder="Choose a date" />
-          <DateField label="Arrives" value={arrive} onChange={setArrive} placeholder="Choose a date" />
-          <Button label="Add journey" tone="quiet" onPress={addJourney} />
+          ) : null}
+          {visibleDays.length === 0 ? <Muted>Nothing on the itinerary yet.</Muted> : null}
+          {visibleDays.map((dayKey) => {
+            const dayItems = items.filter((item) => item.starts_on === dayKey && item.kind !== 'stay');
+            const night = nightByDate.get(dayKey);
+            const gap = gapByStart.get(dayKey);
+            const move = moveByDate.get(dayKey);
+            const lastDay = space?.end_date === dayKey;
+            return (
+              <View key={dayKey} style={styles.group}>
+                <Text style={styles.section}>
+                  {weekday(dayKey)} · {prettyDate(dayKey)}
+                </Text>
+                {move && !move.has_transport ? (
+                  <View style={styles.move}>
+                    <Text style={styles.nightTitle}>Moving to {move.to_title}</Text>
+                    <Muted>How are you getting there from {move.from_title}?</Muted>
+                    <Pressable onPress={() => addJourney(move)} style={styles.moveAction}>
+                      <Text style={styles.moveActionLabel}>Add travel</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+                {dayItems.map((item) => (
+                  <Pressable
+                    key={item.id}
+                    disabled={!item.booking_id && !item.journey_id}
+                    onPress={() => {
+                      if (item.booking_id) router.push({ pathname: '/bookings/[id]', params: { id: item.booking_id } });
+                      else if (item.journey_id) void removeJourney(item);
+                    }}
+                    style={styles.item}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemTitle}>{item.title}</Text>
+                      <Muted>
+                        {[
+                          item.kind === 'accommodation' ? 'check-in' : item.kind.replaceAll('_', ' '),
+                          item.status === 'confirmed' ? 'Confirmed' : 'Planned',
+                          item.journey_id ? 'tap to remove' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Muted>
+                    </View>
+                    <Text style={styles.clock}>{clockLabel(item.starts_at)}</Text>
+                  </Pressable>
+                ))}
+                {night && night.status !== 'gap' ? (
+                  <NightRow
+                    night={night}
+                    onOpen={() => night.booking_id && router.push({ pathname: '/bookings/[id]', params: { id: night.booking_id } })}
+                    onRemove={() => removeStay(night)}
+                  />
+                ) : null}
+                {gap ? (
+                  <View style={styles.gap}>
+                    <Text style={styles.itemTitle}>
+                      No place to stay for {gap.nights} {gap.nights === 1 ? 'night' : 'nights'}
+                    </Text>
+                    <Muted>
+                      Nothing is booked from the night of {prettyDay(gap.start)} until {prettyDay(gap.end)}. Are you staying
+                      with a friend, or somewhere else we should add to your itinerary?
+                    </Muted>
+                    <View style={styles.gapActions}>
+                      <Button label="I'm staying somewhere" onPress={() => addStay(gap)} />
+                      <Button label="Find a place to book" tone="quiet" onPress={() => router.push('/discover')} />
+                    </View>
+                  </View>
+                ) : null}
+                {night?.status === 'gap' && !gap ? <Muted>No place to stay yet (see above).</Muted> : null}
+                {lastDay ? <Muted>Last day of the trip — no stay needed tonight.</Muted> : null}
+              </View>
+            );
+          })}
         </>
       ) : null}
 
       {tab === 'Bookings' ? (
         <>
-          {bookings.length === 0 ? <Muted>No bookings linked to this space.</Muted> : null}
-          {groupBookings(bookings).map(([category, rows]) => (
-            <View key={category} style={styles.group}>
-              <Text style={styles.section}>{categoryLabels[category] ?? category.replaceAll('_', ' ')}</Text>
+          {bookingSections
+            .filter((section) => section.always || bookings.some((booking) => section.categories.includes(booking.category)))
+            .map((section) => {
+              const rows = bookings.filter((booking) => section.categories.includes(booking.category));
+              return (
+            <View key={section.label} style={styles.group}>
+              <Text style={styles.section}>{section.label}</Text>
+              {rows.length === 0 ? <Muted>None from your confirmations yet.</Muted> : null}
               {rows.map((booking) => (
                 <Pressable
                   key={booking.id}
@@ -322,10 +370,27 @@ export default function SpaceDetailScreen() {
                 </Pressable>
               ))}
             </View>
-          ))}
-          <Button label="Add booking" onPress={() => router.push({ pathname: '/new-booking', params: { space: id } })} />
-          <Button label="Paste a confirmation" tone="quiet" onPress={() => router.push('/import-confirmation')} />
+              );
+            })}
         </>
+      ) : null}
+
+      {tab === 'Places' && token && id ? <SpacePlaces spaceId={id} token={token} /> : null}
+
+      {tab === 'Calendar' && space?.start_date && space.end_date ? (
+        <SpaceCalendar
+          start={space.start_date}
+          end={space.end_date}
+          items={items}
+          coverage={coverage}
+          onPickDay={(value) => {
+            setDay(value);
+            setTab('Itinerary');
+          }}
+        />
+      ) : null}
+      {tab === 'Calendar' && !(space?.start_date && space.end_date) ? (
+        <Muted>Add start and end dates to this space to see a calendar.</Muted>
       ) : null}
 
       {tab === 'Photos' ? (
@@ -351,30 +416,39 @@ export default function SpaceDetailScreen() {
         </View>
       ) : null}
 
-      <Text style={styles.section}>Stay</Text>
-      {stays.map((stay) => (
-        <View key={stay.id} style={styles.item}>
-          <View>
-            <Text style={styles.itemTitle}>{stay.title}</Text>
-            <Muted>{[stay.start_date, stay.end_date].filter(Boolean).join(' – ') || 'Dates open'}</Muted>
-          </View>
-        </View>
-      ))}
-      <Field label="Stay name" value={stayTitle} onChangeText={setStayTitle} placeholder="Apartment or hotel" />
-      <Field label="From" value={stayStart} onChangeText={setStayStart} placeholder="YYYY-MM-DD" />
-      <Field label="Until" value={stayEnd} onChangeText={setStayEnd} placeholder="YYYY-MM-DD" />
-      <Button label="Add stay" tone="quiet" onPress={addStay} />
-
-      <Text style={styles.section}>Saved places</Text>
-      {places.map((place) => (
-        <View key={place.id} style={styles.item}>
-          <Text style={styles.itemTitle}>{place.name}</Text>
-        </View>
-      ))}
-      <Field label="Place" value={placeName} onChangeText={setPlaceName} placeholder="A place you want to keep" />
-      <Button label="Save place" tone="quiet" onPress={addPlace} />
-      <Button label="Archive space" tone="quiet" onPress={archive} />
+      <View style={styles.manage}>
+        <Text style={styles.section}>Manage space</Text>
+        <Button label="Edit name, dates and destination" tone="quiet" onPress={() => router.push({ pathname: '/new-space', params: { id } })} />
+        <Button label="Add travel between places" tone="quiet" onPress={() => addJourney()} />
+        <Button label="Add a booking manually" tone="quiet" onPress={() => router.push({ pathname: '/new-booking', params: { space: id } })} />
+        <Button label="Merge another space into this one" tone="quiet" onPress={() => router.push({ pathname: '/merge-space', params: { id } })} />
+        {archived ? null : <Button label="Archive space" tone="quiet" onPress={archive} />}
+      </View>
     </Screen>
+  );
+}
+
+function NightRow({ night, onOpen, onRemove }: { night: CoverageNight; onOpen: () => void; onRemove: () => void }) {
+  const progress = night.night_count && night.night_count > 1 ? ` · night ${night.night_index} of ${night.night_count}` : '';
+  const label =
+    night.status === 'transit'
+      ? `Overnight travel: ${night.title}`
+      : night.status === 'own_stay'
+        ? `Staying: ${night.title}`
+        : `Staying at ${night.title}`;
+  return (
+    <Pressable onPress={night.status === 'own_stay' ? undefined : onOpen} style={styles.night}>
+      <Text style={styles.nightIcon}>{night.status === 'transit' ? '✈︎' : '☾'}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.nightTitle}>{label}</Text>
+        <Muted>{night.status === 'own_stay' ? `Added by you${progress}` : `Tonight${progress}`}</Muted>
+      </View>
+      {night.status === 'own_stay' ? (
+        <Pressable onPress={onRemove} hitSlop={8}>
+          <Text style={styles.remove}>Remove</Text>
+        </Pressable>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -400,5 +474,18 @@ const styles = StyleSheet.create({
   actions: { gap: 10 },
   note: { backgroundColor: '#fff', borderRadius: 18, padding: 16, gap: 6 },
   group: { gap: 8 },
+  move: { backgroundColor: '#fff', borderRadius: 16, padding: 12, gap: 4, borderWidth: 1, borderColor: theme.line, borderStyle: 'dashed' },
+  moveAction: { alignSelf: 'flex-start', marginTop: 4, backgroundColor: theme.mossSoft, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
+  moveActionLabel: { color: theme.moss, fontWeight: '700' },
+  manage: { gap: 8, marginTop: 12 },
+  archivedNote: { backgroundColor: theme.coralSoft, borderRadius: 18, padding: 16, gap: 8 },
+  summary: { backgroundColor: theme.mossSoft, borderRadius: 18, padding: 14, gap: 4 },
+  summaryWarn: { backgroundColor: theme.coralSoft },
+  night: { backgroundColor: theme.mossSoft, borderRadius: 16, padding: 12, flexDirection: 'row', gap: 10, alignItems: 'center' },
+  nightIcon: { color: theme.moss, fontSize: 18, width: 22, textAlign: 'center' },
+  nightTitle: { color: theme.ink, fontSize: 15, fontWeight: '600' },
+  remove: { color: theme.danger, fontWeight: '600' },
+  gap: { backgroundColor: theme.coralSoft, borderRadius: 18, padding: 16, gap: 8, borderWidth: 1, borderColor: theme.clay },
+  gapActions: { gap: 8 },
   section: { fontSize: 18, fontWeight: '700', color: theme.ink, marginTop: 8, textTransform: 'capitalize' },
 });

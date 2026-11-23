@@ -69,6 +69,21 @@ class TravelSpaceIn(BaseModel):
     summary: str | None = None
 
 
+class TravelSpacePatch(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    kind: TravelSpaceKind | None = None
+    status: TravelSpaceStatus | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    destination_name: str | None = Field(default=None, max_length=160)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    summary: str | None = None
+
+
+class MergeIn(BaseModel):
+    from_space_id: UUID
+
+
 class TravelSpaceOut(BaseModel):
     id: UUID
     title: str
@@ -77,6 +92,7 @@ class TravelSpaceOut(BaseModel):
     start_date: date | None
     end_date: date | None
     destination_name: str | None
+    country_code: str | None = None
     summary: str | None
 
 
@@ -155,6 +171,10 @@ class SavedPlaceIn(BaseModel):
     destination_name: str | None = None
 
 
+class SavedPlaceStatusIn(BaseModel):
+    status: SavedPlaceStatus
+
+
 class SavedPlaceOut(BaseModel):
     id: UUID
     name: str
@@ -173,6 +193,27 @@ class BookingIn(BaseModel):
     provider: str = Field(min_length=1, max_length=160)
     confirmation_reference: str | None = Field(default=None, max_length=64)
     status: BookingStatus = BookingStatus.confirmed
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    timezone: str | None = None
+    location_label: str | None = Field(default=None, max_length=240)
+    latitude: float | None = None
+    longitude: float | None = None
+    price_amount: Decimal | None = None
+    price_currency: str | None = None
+    cancellation_policy: str | None = None
+    notes: str | None = None
+    details: dict | None = None
+
+
+class BookingPatch(BaseModel):
+    """Partial update: only the fields sent are changed."""
+
+    travel_space_id: UUID | None = None
+    category: BookingCategory | None = None
+    provider: str | None = Field(default=None, min_length=1, max_length=160)
+    confirmation_reference: str | None = Field(default=None, max_length=64)
+    status: BookingStatus | None = None
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     timezone: str | None = None
@@ -208,10 +249,60 @@ class BookingOut(BaseModel):
     details: dict | None
 
 
+class BookingSourceOut(BaseModel):
+    """Where a booking's details came from, with a link back to the original."""
+
+    kind: str
+    subject: str
+    received_at: datetime | None
+    url: str | None
+
+
+class BookingDetailOut(BookingOut):
+    sources: list[BookingSourceOut] = []
+
+
+class NightOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    date: date
+    status: str
+    title: str | None = None
+    booking_id: UUID | None = None
+    stay_id: UUID | None = None
+    night_index: int | None = None
+    night_count: int | None = None
+
+
+class GapOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    start: date
+    end: date
+    nights: int
+
+
+class MoveOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    date: date
+    from_title: str
+    to_title: str
+    has_transport: bool
+
+
+class StayCoverageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    nights: list[NightOut]
+    gaps: list[GapOut]
+    moves: list[MoveOut] = []
+    total_nights: int
+    covered_nights: int
+
+
 class ItineraryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     booking_id: UUID | None = None
+    stay_id: UUID | None = None
+    journey_id: UUID | None = None
     travel_space_id: UUID | None
     kind: ItineraryKind
     status: ItineraryStatus

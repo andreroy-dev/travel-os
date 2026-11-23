@@ -1,4 +1,5 @@
 import base64
+import html
 import json
 import re
 from datetime import UTC, date, datetime, timedelta
@@ -83,8 +84,21 @@ def connect_from_code(session: Session, user: User, code: str) -> Integration:
     return integration
 
 
+def revoke_google_access(ciphertext: str | None) -> None:
+    """Best effort: tell Google to drop our refresh token. Never blocks a disconnect."""
+    if not ciphertext:
+        return
+    try:
+        refresh = json.loads(decrypt_secret(ciphertext)).get("refresh_token")
+        if refresh:
+            httpx.post("https://oauth2.googleapis.com/revoke", data={"token": refresh}, timeout=10)
+    except Exception:  # noqa: BLE001 - revocation failure must not keep the user's data around
+        pass
+
+
 def disconnect(session: Session, user: User) -> None:
     integration = _integration_for(session, user.id)
+    revoke_google_access(integration.token_ciphertext)
     integration.status = IntegrationStatus.disconnected
     integration.token_ciphertext = None
     integration.scopes = []
@@ -383,8 +397,9 @@ def _plain_text(payload: dict) -> str:
 
 def _html_to_text(value: str) -> str:
     without_skips = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", value)
-    with_breaks = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</li>", "\n", without_skips)
+    with_breaks = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</li>|<tr>|</h\d>", "\n", without_skips)
     text = re.sub(r"(?s)<[^>]+>", " ", with_breaks)
+    text = html.unescape(text).replace("\xa0", " ")
     return re.sub(r"[ \t]+\n", "\n", re.sub(r"[ \t]{2,}", " ", text)).strip()
 
 

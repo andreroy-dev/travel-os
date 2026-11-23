@@ -93,7 +93,7 @@ CATEGORY_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
 CATEGORY_LABELS = {
     "flight": "Flights",
     "accommodation": "Accommodation",
-    "activity": "Tours and activities",
+    "activity": "Tours and guides",
     "train": "Trains",
     "bus": "Buses",
     "car_rental": "Car rentals",
@@ -119,9 +119,12 @@ def field_catalog() -> list[dict]:
 def normalize_details(category: str, raw: dict) -> dict:
     allowed = {key for key, _label in CATEGORY_FIELDS.get(category, CATEGORY_FIELDS["other"])}
     allowed.add("title")
-    cleaned: dict[str, str | int] = {"schema_version": 1}
+    cleaned: dict = {"schema_version": 1}
+    segments = _clean_segments(raw.get("segments"))
+    if segments:
+        cleaned["segments"] = segments
     for key, value in raw.items():
-        if key not in allowed or value is None:
+        if key in {"segments", "schema_version"} or key not in allowed or value is None:
             continue
         if isinstance(value, list):
             text = ", ".join(str(item).strip() for item in value if str(item).strip())
@@ -130,3 +133,20 @@ def normalize_details(category: str, raw: dict) -> dict:
         if text:
             cleaned[key] = text[:240]
     return cleaned
+
+
+def _clean_segments(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        segment = {
+            key: str(raw).strip()[:80]
+            for key, raw in item.items()
+            if raw and str(raw).strip()
+        }
+        if segment:
+            cleaned.append(segment)
+    return cleaned[:8]

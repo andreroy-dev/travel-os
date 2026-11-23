@@ -329,7 +329,9 @@ def _apply_extracted(
         existing.ends_at = extracted.ends_at
     if extracted.location_label:
         existing.location_label = extracted.location_label
-    if not existing.notes and message.subject:
+    if message.source == BookingSourceKind.gmail:
+        existing.notes = None
+    elif not existing.notes and message.subject:
         existing.notes = message.subject[:500]
     if extracted.details:
         existing.details = extracted.details

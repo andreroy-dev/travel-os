@@ -62,6 +62,7 @@ function RootNavigator() {
         }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+        <Stack.Screen name="auth-callback" options={{ headerShown: false }} />
         <Stack.Screen name="new-space" options={{ title: 'New space' }} />
         <Stack.Screen name="spaces/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="soon" options={{ title: 'Coming later' }} />
@@ -69,6 +70,9 @@ function RootNavigator() {
         <Stack.Screen name="import-confirmation" options={{ title: 'Import' }} />
         <Stack.Screen name="gmail" options={{ title: 'Gmail' }} />
         <Stack.Screen name="bookings/[id]" options={{ title: 'Booking' }} />
+        <Stack.Screen name="merge-space" options={{ title: 'Merge spaces' }} />
+        <Stack.Screen name="add-journey" options={{ title: 'Add travel', presentation: 'modal' }} />
+        <Stack.Screen name="add-stay" options={{ title: 'Where are you staying?', presentation: 'modal' }} />
       </Stack>
   );
 }

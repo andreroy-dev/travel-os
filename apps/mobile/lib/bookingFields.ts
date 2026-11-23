@@ -1,7 +1,7 @@
 export const categoryLabels: Record<string, string> = {
   flight: 'Flights',
   accommodation: 'Accommodation',
-  activity: 'Tours and activities',
+  activity: 'Tours and guides',
   train: 'Trains',
   bus: 'Buses',
   car_rental: 'Car rentals',
@@ -11,6 +11,16 @@ export const categoryLabels: Record<string, string> = {
   restaurant: 'Restaurants',
   other: 'Other',
 };
+
+export const bookingSections: { label: string; categories: string[]; always: boolean }[] = [
+  { label: 'Flights', categories: ['flight'], always: true },
+  { label: 'Accommodation', categories: ['accommodation'], always: true },
+  { label: 'Tours and guides', categories: ['activity'], always: true },
+  { label: 'Trains, buses and transfers', categories: ['train', 'bus', 'transfer', 'car_rental'], always: false },
+  { label: 'Restaurants', categories: ['restaurant'], always: false },
+  { label: 'Insurance and cruises', categories: ['insurance', 'cruise'], always: false },
+  { label: 'Other', categories: ['other'], always: false },
+];
 
 export const categoryFields: Record<string, { key: string; label: string }[]> = {
   flight: [

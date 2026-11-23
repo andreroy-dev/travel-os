@@ -4,15 +4,17 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button, Muted, Screen, theme } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
+import { confirmAction } from '@/lib/confirm';
 import { useSession } from '@/lib/session';
 import type { TravelSpace } from '@/lib/types';
 
-const filters = ['all', 'active', 'planning', 'completed'] as const;
+const filters = ['all', 'active', 'planning', 'completed', 'archived'] as const;
 
 export default function TripsScreen() {
   const { token } = useSession();
   const router = useRouter();
   const [spaces, setSpaces] = useState<TravelSpace[]>([]);
+  const [archived, setArchived] = useState<TravelSpace[]>([]);
   const [filter, setFilter] = useState<(typeof filters)[number]>('all');
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -21,7 +23,12 @@ export default function TripsScreen() {
     if (!token) return;
     setRefreshing(true);
     try {
-      setSpaces(await api<TravelSpace[]>('/travel-spaces', { token }));
+      const [live, old] = await Promise.all([
+        api<TravelSpace[]>('/travel-spaces', { token }),
+        api<TravelSpace[]>('/travel-spaces?archived=true', { token }),
+      ]);
+      setSpaces(live);
+      setArchived(old);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load trips.');
@@ -32,8 +39,25 @@ export default function TripsScreen() {
 
   useFocusEffect(useCallback(() => void load(), [load]));
 
-  const visible = spaces.filter((space) => {
-    if (filter === 'all') return true;
+  async function restore(space: TravelSpace) {
+    if (!token) return;
+    const ok = await confirmAction(
+      'Restore this space?',
+      `"${space.title}" will move back to your Travel Spaces with all its bookings.`,
+      'Restore',
+    );
+    if (!ok) return;
+    try {
+      await api(`/travel-spaces/${space.id}/restore`, { method: 'POST', token, body: {} });
+      setFilter('all');
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not restore this space.');
+    }
+  }
+
+  const visible = (filter === 'archived' ? archived : spaces).filter((space) => {
+    if (filter === 'all' || filter === 'archived') return true;
     if (filter === 'active') return space.status === 'active' || space.status === 'upcoming';
     return space.status === filter;
   });
@@ -70,10 +94,17 @@ export default function TripsScreen() {
             <Text style={[styles.meta, featured && styles.onDark]}>
               {[space.destination_name, space.kind.replaceAll('_', ' ')].filter(Boolean).join(' · ')}
             </Text>
+            {space.status === 'archived' ? (
+              <Pressable onPress={() => restore(space)} style={styles.restore}>
+                <Text style={styles.restoreLabel}>Restore to active</Text>
+              </Pressable>
+            ) : null}
           </Pressable>
         );
       })}
-      {visible.length === 0 ? <Muted>No Travel Spaces in this filter.</Muted> : null}
+      {visible.length === 0 ? (
+        <Muted>{filter === 'archived' ? 'Nothing archived. Archived spaces show up here and can be restored.' : 'No Travel Spaces in this filter.'}</Muted>
+      ) : null}
     </Screen>
   );
 }
@@ -83,7 +114,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 32, fontWeight: '700', color: theme.ink },
   add: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.clay, alignItems: 'center', justifyContent: 'center' },
   addLabel: { color: '#fff', fontSize: 28, lineHeight: 30 },
-  filters: { flexDirection: 'row', gap: 8 },
+  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  restore: { alignSelf: 'flex-start', marginTop: 6, backgroundColor: theme.moss, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
+  restoreLabel: { color: '#fff', fontWeight: '700' },
   filter: { backgroundColor: '#fff', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 },
   filterOn: { backgroundColor: theme.moss },
   filterText: { color: theme.ink, textTransform: 'capitalize', fontWeight: '600' },

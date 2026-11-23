@@ -237,6 +237,9 @@ def extract_booking(subject: str, body: str, classification: EmailClassification
     extracted.cancellation_policy = _cancellation_policy(text)
     extracted.details = _structured_details(text, extracted)
     _apply_clocks(extracted)
+    from app.services.provider_parse import apply_known_provider
+
+    apply_known_provider(text, extracted)
     if extracted.details.get("title"):
         extracted.location_label = str(extracted.details["title"])[:240]
 
@@ -261,6 +264,12 @@ def is_promotion(subject: str, body: str) -> bool:
     if any(word in subject_lower for word in _CONFIRMED_SUBJECT):
         return False
     text = f"{subject}\n{body}".lower()
+    if "pnr number" in text and "departure flight" in text:
+        return False
+    if "total price" in text and "check-in" in text:
+        return False
+    if "room type" in text and "check in" in text and "booking id" in text:
+        return False
     return any(phrase in text for phrase in _PROMO_PHRASES)
 
 

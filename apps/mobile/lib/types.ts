@@ -26,6 +26,7 @@ export type TravelSpace = {
   start_date: string | null;
   end_date: string | null;
   destination_name: string | null;
+  country_code?: string | null;
   summary: string | null;
 };
 
@@ -55,12 +56,30 @@ export type Booking = {
   price_currency: string | null;
   cancellation_policy: string | null;
   notes: string | null;
-  details: Record<string, string | number> | null;
+  details: {
+    segments?: {
+      flight_number?: string;
+      airline?: string;
+      origin?: string;
+      destination?: string;
+      origin_code?: string;
+      destination_code?: string;
+      departure_time?: string;
+      arrival_time?: string;
+      departure_terminal?: string;
+      arrival_terminal?: string;
+      cabin?: string;
+      pnr?: string;
+    }[];
+    [key: string]: string | number | undefined | object;
+  } | null;
 };
 
 export type ItineraryItem = {
   id: string;
   booking_id: string | null;
+  stay_id?: string | null;
+  journey_id?: string | null;
   travel_space_id: string | null;
   kind: string;
   status: string;
@@ -121,4 +140,35 @@ export type IngestResult = {
   classification: string;
   booking_id: string | null;
   detail: string;
+};
+
+export type BookingSource = {
+  kind: string;
+  subject: string;
+  received_at: string | null;
+  url: string | null;
+};
+
+export type BookingDetail = Booking & { sources: BookingSource[] };
+
+export type CoverageNight = {
+  date: string;
+  status: 'booked' | 'own_stay' | 'transit' | 'gap';
+  title: string | null;
+  booking_id: string | null;
+  stay_id: string | null;
+  night_index: number | null;
+  night_count: number | null;
+};
+
+export type StayGap = { start: string; end: string; nights: number };
+
+export type StayMove = { date: string; from_title: string; to_title: string; has_transport: boolean };
+
+export type StayCoverage = {
+  nights: CoverageNight[];
+  gaps: StayGap[];
+  moves: StayMove[];
+  total_nights: number;
+  covered_nights: number;
 };
