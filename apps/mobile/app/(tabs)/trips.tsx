@@ -7,6 +7,7 @@ import { Button, Muted, Screen, theme } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { loadCached } from '@/lib/cache';
 import { confirmAction } from '@/lib/confirm';
+import { prettyDate, prettyDay } from '@/lib/dates';
 import { useSession } from '@/lib/session';
 import type { Booking, TravelSpace } from '@/lib/types';
 
@@ -132,13 +133,13 @@ export default function TripsScreen() {
                 <PressableScale onPress={() => router.push(`/spaces/${space.id}`)} style={[styles.card, featured && styles.featured]}>
                   <View style={styles.row}>
                     <Text style={[styles.badge, featured && styles.badgeOn]}>{space.status}</Text>
-                    <Text style={[styles.meta, featured && styles.onDark]}>{space.start_date ?? 'No dates yet'}</Text>
+                    <Text style={[styles.meta, featured && styles.onDark]}>{space.start_date ? prettyDate(space.start_date) : 'No dates yet'}</Text>
                   </View>
                   <SharedTitle tag={`space-${space.id}`} style={[styles.cardTitle, featured && styles.onDark]}>
                     {space.title}
                   </SharedTitle>
                   <Text style={[styles.meta, featured && styles.onDark]}>
-                    {[space.destination_name, space.start_date && space.end_date ? `${space.start_date} – ${space.end_date}` : null, space.kind.replaceAll('_', ' ')]
+                    {[space.destination_name, space.start_date && space.end_date ? `${prettyDay(space.start_date)} → ${prettyDay(space.end_date)}` : null, space.kind.replaceAll('_', ' ')]
                       .filter(Boolean)
                       .join(' · ')}
                   </Text>

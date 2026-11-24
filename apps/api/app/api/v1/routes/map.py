@@ -35,13 +35,13 @@ def map_points(user: CurrentUser, session: DbSession, travel_space_id: UUID | No
         if booking.latitude is None or booking.longitude is None:
             query = _booking_query(booking)
             if query:
-                unlocated.append({"id": str(booking.id), "kind": "booking", "title": booking.location_label or booking.provider, "query": query})
+                unlocated.append({"id": str(booking.id), "kind": "booking", "title": _booking_name(booking), "query": query})
             continue
         points.append(
             {
                 "id": str(booking.id),
                 "kind": "booking",
-                "title": booking.location_label or booking.provider,
+                "title": _booking_name(booking),
                 "subtitle": booking.category.value,
                 "latitude": booking.latitude,
                 "longitude": booking.longitude,
@@ -97,3 +97,13 @@ def _booking_query(booking: Booking) -> str | None:
             return f"{name}, {value.strip()}" if isinstance(name, str) and name not in value else value.strip()
     name = details.get("property_name") or booking.location_label
     return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def _booking_name(booking: Booking) -> str:
+    """The hotel or venue name when the confirmation had one, not the booking site."""
+    details = booking.details or {}
+    for key in ("property_name", "experience_name", "venue", "title"):
+        value = details.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return booking.location_label or booking.provider

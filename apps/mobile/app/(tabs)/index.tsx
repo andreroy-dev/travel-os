@@ -129,7 +129,8 @@ export default function HomeScreen() {
   const heading = count && place ? `${count} in ${place}` : space?.title ?? 'At home';
   const today = localToday();
   const todayItems = items.filter((item) => item.starts_on === today);
-  const plan = todayItems.length > 0 ? todayItems : items.slice(0, 4);
+  // Nothing today: show what's coming next, never what already happened.
+  const plan = todayItems.length > 0 ? todayItems : items.filter((item) => (item.starts_on ?? '') > today).slice(0, 4);
   // One tile per kind of booking; each shows the one that matters now and opens the full list.
   const order = ['flight', 'accommodation', 'train', 'bus', 'activity', 'car_rental', 'transfer', 'restaurant', 'cruise', 'insurance', 'other'];
   const groups = order
@@ -183,7 +184,7 @@ export default function HomeScreen() {
       ) : null}
 
       {loaded ? <View style={styles.rowBetween}>
-        <Text style={styles.section}>{todayItems.length > 0 ? "Today's plan" : 'Saved plan'}</Text>
+        <Text style={styles.section}>{todayItems.length > 0 ? "Today's plan" : 'Coming up'}</Text>
         {space ? (
           <PressableScale onPress={() => router.push(`/spaces/${space.id}`)}>
             <Text style={styles.link}>Itinerary</Text>

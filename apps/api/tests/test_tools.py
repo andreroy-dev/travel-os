@@ -32,7 +32,7 @@ def test_packing_and_trip_budget_are_saved_records(monkeypatch):
 
     monkeypatch.setattr(
         "app.services.fx.httpx.get",
-        lambda url, timeout: type(
+        lambda url, timeout, **_kw: type(
             "R",
             (),
             {"raise_for_status": lambda self: None, "json": lambda self: {"date": "2026-11-23", "rates": {"INR": "100"}}},

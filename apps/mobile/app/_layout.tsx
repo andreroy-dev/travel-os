@@ -78,13 +78,13 @@ function RootNavigator() {
         <Stack.Screen name="add-journey" options={{ title: 'Add travel', presentation: 'modal' }} />
         <Stack.Screen name="add-stay" options={{ title: 'Where are you staying?', presentation: 'modal' }} />
         <Stack.Screen name="living/[id]" options={{ title: 'Living' }} />
-        <Stack.Screen name="memories/[id]" options={{ title: 'Photos' }} />
+        <Stack.Screen name="memories/[id]" options={{ title: '', headerBackTitle: 'Back' }} />
         <Stack.Screen name="expenses" options={{ title: 'Expenses' }} />
         <Stack.Screen name="map" options={{ headerShown: false }} />
         <Stack.Screen name="document/[id]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="trip-bookings" options={{ title: 'Bookings' }} />
-        <Stack.Screen name="wallet" options={{ title: 'Travel Wallet' }} />
-        <Stack.Screen name="tools" options={{ title: 'Tools' }} />
+        <Stack.Screen name="wallet" options={{ title: '', headerBackTitle: 'Back' }} />
+        <Stack.Screen name="tools" options={{ title: '', headerBackTitle: 'Back' }} />
       </Stack>
   );
 }

@@ -5,6 +5,7 @@ import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-nat
 import { Sheet } from '@/components/Sheet';
 import { Button, ErrorNote, Field, Muted, Screen, theme } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
+import { prettyDay } from '@/lib/dates';
 import { useSession } from '@/lib/session';
 import type { StayCoverage, TravelSpace } from '@/lib/types';
 
@@ -143,7 +144,7 @@ export default function DiscoverScreen() {
         <View key={`${gap.spaceId}-${gap.start}`} style={styles.card}>
           <Text style={styles.cardTitle}>{gap.space}</Text>
           <Muted>
-            {gap.nights} {gap.nights === 1 ? 'night' : 'nights'} · {gap.start} to {gap.end}
+            {gap.nights} {gap.nights === 1 ? 'night' : 'nights'} · {prettyDay(gap.start)} → {prettyDay(gap.end)}
           </Muted>
           <Button label="Open this space" tone="quiet" onPress={() => router.push(`/spaces/${gap.spaceId}`)} />
         </View>

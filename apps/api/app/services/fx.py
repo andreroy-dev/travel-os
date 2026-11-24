@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.fx import FxSnapshot
 
-SOURCE = "https://api.frankfurter.app/latest?from=EUR"
+SOURCE = "https://api.frankfurter.dev/v1/latest?base=EUR"
 TTL = timedelta(hours=1)
 NOTE = "Rates are the European Central Bank figures published by Frankfurter. They refresh when the saved table is older than an hour."
 
@@ -37,7 +37,7 @@ def latest_rates(session: Session) -> dict | None:
         payload["fetched_at"] = row.fetched_at.isoformat()
         return payload
     try:
-        response = httpx.get(SOURCE, timeout=10)
+        response = httpx.get(SOURCE, timeout=10, follow_redirects=True)
         response.raise_for_status()
         payload = response.json()
         if "rates" not in payload:

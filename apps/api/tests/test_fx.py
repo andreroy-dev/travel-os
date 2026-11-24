@@ -19,7 +19,7 @@ class Response:
 def test_exchange_converts_every_currency_into_the_home_currency(monkeypatch):
     calls = {"count": 0}
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **_kw):
         calls["count"] += 1
         assert "from=EUR" in url
         return Response({"date": "2026-11-21", "rates": {"INR": "100", "USD": "1.1"}})
@@ -64,7 +64,7 @@ def test_rates_refresh_after_an_hour(monkeypatch):
         def commit(self):
             return None
 
-    def fake_get(url, timeout):
+    def fake_get(url, timeout, **_kw):
         return Response({"date": "2026-11-23", "rates": {"INR": "100"}})
 
     monkeypatch.setattr("app.services.fx.httpx.get", fake_get)
