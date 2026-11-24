@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     # Dev email-only sign-in. Turned off automatically in production.
     dev_login_enabled: bool = True
+    # Forwarding import. Both must be set before the app shows a forwarding address:
+    # the domain must receive mail through an inbound provider that posts to
+    # /api/v1/emails/inbound with the X-Inbound-Secret header.
+    # Affiliate IDs for provider search links (optional; disclosed in the app).
+    booking_affiliate_id: str | None = None
+    inbound_email_domain: str | None = None
+    inbound_email_secret: str | None = None
 
     google_client_id: str | None = None
     google_client_secret: str | None = None

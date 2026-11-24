@@ -1,10 +1,12 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, StyleSheet, Text, View } from 'react-native';
 
+import { Appear, PressableScale, SkeletonList } from '@/components/motion';
 import { Button, ErrorNote, Muted, Screen, theme } from '@/components/ui';
 import { confirmAction } from '@/lib/confirm';
 import { FlightCard } from '@/components/FlightCard';
+import { StayCard } from '@/components/StayCard';
 import { ApiError, api } from '@/lib/api';
 import { categoryFields, categoryLabels } from '@/lib/bookingFields';
 import { useSession } from '@/lib/session';
@@ -32,6 +34,7 @@ export default function BookingDetailScreen() {
   const { token } = useSession();
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const router = useRouter();
 
   async function remove() {
@@ -60,6 +63,8 @@ export default function BookingDetailScreen() {
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not open this booking.');
+    } finally {
+      setLoaded(true);
     }
   }, [token, id]);
 
@@ -94,16 +99,22 @@ export default function BookingDetailScreen() {
   return (
     <Screen>
       <Text style={styles.kicker}>{categoryLabels[booking?.category ?? 'other'] ?? 'Booking'}</Text>
-      {booking?.category === 'flight' && segments.length > 0 ? null : (
+      {booking?.category === 'flight' && segments.length > 0 ? null : booking?.category === 'accommodation' ? null : (
         <Text style={styles.title}>{booking?.location_label || booking?.provider || 'Booking'}</Text>
       )}
       <ErrorNote message={error} />
+      {!loaded ? <SkeletonList count={3} /> : null}
       {booking?.category === 'flight' && segments.length > 0 ? <FlightCard booking={booking} segments={segments} /> : null}
-      {rows.map((row) => (
-        <View key={row.label} style={styles.row}>
+      {booking?.category === 'accommodation' ? <StayCard booking={booking} /> : null}
+      {booking?.category === 'accommodation'
+        ? null
+        : rows.map((row, index) => (
+        <Appear key={row.label} index={index}>
+        <View style={styles.row}>
           <Text style={styles.label}>{row.label}</Text>
           <Text style={styles.value}>{row.value}</Text>
         </View>
+        </Appear>
       ))}
       {booking && booking.sources.length > 0 ? (
         <View style={styles.source}>
@@ -117,9 +128,9 @@ export default function BookingDetailScreen() {
                   .join(' · ')}
               </Muted>
               {source.url ? (
-                <Pressable onPress={() => source.url && Linking.openURL(source.url)} style={styles.link}>
+                <PressableScale onPress={() => source.url && Linking.openURL(source.url)} style={styles.link}>
                   <Text style={styles.linkLabel}>Open original email ↗</Text>
-                </Pressable>
+                </PressableScale>
               ) : null}
             </View>
           ))}

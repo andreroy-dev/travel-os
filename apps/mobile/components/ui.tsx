@@ -1,8 +1,7 @@
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -10,7 +9,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { Appear, PressableScale, ShakeNote } from '@/components/motion';
+import { tap } from '@/lib/haptics';
 
 export const theme = {
   paper: '#f3f6f1',
@@ -46,17 +49,33 @@ export function Screen({
   const insets = useSafeAreaInsets();
   return (
     <ScrollView
+      // iOS scrolls the focused field above the keyboard; the spacer below lets Android scroll there too.
+      automaticallyAdjustKeyboardInsets
+      keyboardDismissMode="interactive"
       style={styles.screen}
       contentContainerStyle={[styles.content, safeTop && { paddingTop: insets.top + 16 }]}
       keyboardShouldPersistTaps="handled"
       refreshControl={
         onRefresh ? (
-          <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={theme.clay} />
+          <RefreshControl
+            refreshing={!!refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.clay}
+            colors={[theme.clay, theme.moss]}
+            progressBackgroundColor={theme.card}
+          />
         ) : undefined
       }>
       {children}
+      {Platform.OS === 'android' ? <KeyboardSpacer /> : null}
     </ScrollView>
   );
+}
+
+function KeyboardSpacer() {
+  const keyboard = useAnimatedKeyboard();
+  const spacer = useAnimatedStyle(() => ({ height: keyboard.height.value }));
+  return <Animated.View style={spacer} />;
 }
 
 export function Title({ children }: { children: string }) {
@@ -78,6 +97,7 @@ export function Field({
   placeholder,
   multiline,
   secure,
+  keyboardType,
 }: {
   label: string;
   value: string;
@@ -85,7 +105,10 @@ export function Field({
   placeholder?: string;
   multiline?: boolean;
   secure?: boolean;
+  /** 'decimal-pad' for money, 'number-pad' for counts, 'email-address' for emails. */
+  keyboardType?: 'default' | 'decimal-pad' | 'number-pad' | 'email-address' | 'phone-pad' | 'url';
 }) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -97,8 +120,12 @@ export function Field({
         autoCapitalize="none"
         multiline={multiline}
         secureTextEntry={secure}
+        keyboardType={keyboardType}
+        returnKeyType="done"
         autoCorrect={secure ? false : undefined}
-        style={[styles.input, multiline && styles.multiline]}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={[styles.input, focused && styles.inputFocused, multiline && styles.multiline]}
       />
     </View>
   );
@@ -116,26 +143,24 @@ export function Button({
   tone?: 'primary' | 'quiet';
 }) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
+    <PressableScale
+      onPress={() => {
+        tap();
+        onPress();
+      }}
       disabled={busy}
-      style={({ pressed }) => [
-        styles.button,
-        tone === 'quiet' && styles.quietButton,
-        pressed && styles.pressed,
-      ]}>
+      style={[styles.button, tone === 'quiet' && styles.quietButton, busy && styles.busy]}>
       <View style={styles.buttonRow}>
         {busy ? <ActivityIndicator color={tone === 'quiet' ? theme.ink : '#fffdf8'} /> : null}
         <Text style={[styles.buttonLabel, tone === 'quiet' && styles.quietLabel]}>{label}</Text>
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 
 export function ErrorNote({ message }: { message: string | null }) {
   if (!message) return null;
-  return <Text style={styles.error}>{message}</Text>;
+  return <ShakeNote message={message} />;
 }
 
 export function Chip({ label }: { label: string }) {
@@ -148,10 +173,12 @@ export function Chip({ label }: { label: string }) {
 
 export function Empty({ title, body }: { title: string; body: string }) {
   return (
-    <Card>
-      <Text style={styles.cardTitle}>{title}</Text>
-      <Muted>{body}</Muted>
-    </Card>
+    <Appear>
+      <Card>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Muted>{body}</Muted>
+      </Card>
+    </Appear>
   );
 }
 
@@ -171,11 +198,16 @@ const styles = StyleSheet.create({
   muted: { color: theme.muted, fontSize: 15, lineHeight: 21 },
   card: {
     backgroundColor: theme.card,
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 16,
     gap: 6,
     borderWidth: 1,
     borderColor: theme.line,
+    shadowColor: '#14211c',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 1,
   },
   cardTitle: { fontFamily: serif, fontSize: 20, color: theme.ink },
   field: { gap: 6 },
@@ -195,21 +227,26 @@ const styles = StyleSheet.create({
     color: theme.ink,
     fontSize: 16,
   },
+  inputFocused: { borderColor: theme.moss, borderWidth: 1.5 },
   multiline: { minHeight: 120, textAlignVertical: 'top' },
   button: {
     backgroundColor: theme.moss,
     borderRadius: 999,
-    minHeight: 48,
+    minHeight: 50,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
+    shadowColor: theme.mossDeep,
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  quietButton: { backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.line },
-  pressed: { opacity: 0.75 },
+  quietButton: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.line, shadowOpacity: 0, elevation: 0 },
+  busy: { opacity: 0.75 },
   buttonRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   buttonLabel: { color: '#fffdf8', fontSize: 16, fontWeight: '600' },
   quietLabel: { color: theme.ink },
-  error: { color: theme.danger, fontSize: 14, lineHeight: 20 },
   chip: {
     alignSelf: 'flex-start',
     backgroundColor: theme.mossSoft,

@@ -8,6 +8,7 @@ from app.api.deps import CurrentUser, DbSession
 from app.models.entities import ItineraryItem, TravelSpace
 from app.schemas import DashboardOut, FocusOut, ItineraryOut, TravelSpaceOut
 from app.services.dashboard import determine_dashboard
+from app.services.dashboard_situation import build_situation
 
 router = APIRouter()
 
@@ -45,6 +46,7 @@ def dashboard(user: CurrentUser, session: DbSession) -> DashboardOut:
             start_date=space.start_date,
             end_date=space.end_date,
             destination_name=space.destination.name if space.destination is not None else None,
+            country_code=space.destination.country_code if space.destination is not None else None,
             summary=space.summary,
         )
     return DashboardOut(
@@ -53,4 +55,5 @@ def dashboard(user: CurrentUser, session: DbSession) -> DashboardOut:
         travel_space=travel_space,
         focus=[FocusOut(key=item.key, label=item.label, available=item.available) for item in mode.focus],
         today=[ItineraryOut.model_validate(item, from_attributes=True) for item in today_items],
+        situation=build_situation(session, user.id, space, spaces, today),
     )

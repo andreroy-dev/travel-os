@@ -1,6 +1,6 @@
 # Travel OS — Launch Build Plan
 
-Last updated: 20 Nov 2026 · Target: App Store in early December 2026, Play Store right after.
+Last updated: 24 Nov 2026 · Target: App Store in early December 2026, Play Store right after.
 
 ## 1. The short version
 
@@ -17,25 +17,75 @@ Last updated: 20 Nov 2026 · Target: App Store in early December 2026, Play Stor
 
   Both are covered below; they mean **iOS can launch in early December, while Android most likely lands about a week later.**
 
-## 2. What is built today
+## 2. Where the app stands against the PRD (audit 24 Nov)
 
-| Area | State |
-|---|---|
-| Travel Spaces: create, edit, archive with confirm, restore, merge | ✅ |
-| Itinerary: night-by-night stay coverage, gap prompts, "how are you getting there?" prompts | ✅ |
-| Your own stays (friend, family, own place) and journeys | ✅ |
-| Bookings: manual add, edit, status, move, delete | ✅ |
-| Gmail import (sync per space, provider parsers, dedupe) | ✅ works for you, **blocked for the public** (see 4.2) |
-| Flight detail (legs, layovers, link to original email) | ✅ needs your wireframes |
-| Places tab, Calendar tab | ✅ |
-| Adaptive home dashboard | ✅ |
-| Assistant (Companion tab) | ⚠️ answers questions; no OpenAI key set and no actions yet |
-| Sign-in | ⚠️ email-only dev sign-in, no password |
-| Hosting | ⚠️ runs on your Mac through tunnels; SQLite database |
-| Account deletion | ⚠️ API exists, no button in the app |
-| Discover, Photos, Budget, Docs tabs | ❌ placeholder screens |
-| Map view, push notifications, offline access | ❌ |
-| Store setup: bundle IDs, EAS builds, icon, privacy policy, listings | ❌ |
+Grok's edits added most of the later PRD modules. This table is the state after that work plus this session's fixes.
+
+| PRD module | State | What's still missing for the PRD |
+|---|---|---|
+| 3. Travel Spaces, states, adaptive home | ✅ Home now changes per situation: at home (upcoming trips, history), planning (countdown, nights sorted, bookings, packing), short holiday (tonight, open nights, spend, places), long stay (tonight, monthly budget, visa days, local life), paused, after a trip (memories, spend, visited) | Weather and "nearby" need location and weather providers |
+| 1. Discover | ⚠️ Saved links, open-gap list, and **provider search links** (Booking.com, Airbnb, Google Hotels with the gap's city and dates) | Real listings need provider APIs (PRD 2.2), destination guides, curated collections, personalised suggestions |
+| 2. Marketplace and providers | ⚠️ Adapter framework, saved listings, click logging, affiliate-ready search links (`BOOKING_AFFILIATE_ID`) | Licensed provider feeds, comparison, conversion tracking |
+| 3. Booking management | ✅ Gmail, PDF/screenshot upload, manual entry, edit/move/cancel, cancellation emails update bookings; forwarding import built but **hidden until we own a receiving domain** | Outlook, calendar integration |
+| Itinerary (chronological, calendar, map) | ✅ Long stays now browse month by month (was cut off after 62 days) | Routing and travel times (PRD 6.3) |
+| 4. AI companion | ⚠️ Answers from real trip data; proposes stays, plans and places, and saves them only after you confirm | Needs an OpenAI key for free-form chat; weather, proactive suggestions |
+| 5. Stays and local life | ✅ Recurring costs, monthly budgets, local services, neighbourhood notes (safety needs a source), events | Cost-of-living estimates (must be sourced) |
+| 6. Maps | ⚠️ Pins for bookings, places and photos | Uses OpenStreetMap's public tiles in a web view, which their tile policy doesn't allow for a store app. Swap to native maps (Apple/Google) before launch. No geocoding, so most bookings have no pin yet |
+| 7. Memories | ✅ Photo picker with date/GPS from EXIF, captions, albums, journal notes | Photos stay on the phone only (no backup), no recaps/video |
+| 8. Wallet and visa | ✅ Documents with expiry reminders, emergency contacts, 90/180 and countdown stay logs | Document files/scans, offline copy, official requirement lookup |
+| 9. Expenses | ✅ Multi-currency expenses, splits, settlement, ECB rates via Frankfurter, trip and monthly budgets | Receipt scanning |
+| 10. Social | ❌ | Shared spaces and invitations |
+| 11. Utilities | ⚠️ Currency converter, packing lists, world clocks | Weather, translation, eSIM, flight status |
+| 12. Rewards and subscriptions | ❌ | Post-launch |
+| Notifications | ⚠️ Local reminders (flight/check-in tomorrow, open nights, document expiry, visa days) | Server push (tokens are stored, nothing sends yet) |
+| Security and privacy | ⚠️ Export and delete account, webhook now needs a shared secret | Real sign-in is built but off until Supabase keys arrive; dev sign-in is email-only |
+
+**Fixed in this audit:**
+- **Database migrations** for the 18 tables Grok added (hosted Postgres would have been missing them).
+- **Forwarding import:**
+  - It no longer hands out a `forward.travelos.app` address on a domain we don't own.
+  - The inbound webhook now needs `INBOUND_EMAIL_SECRET`.
+- **Long trips:** the 62-day itinerary limit is gone.
+- **Adaptive Home**, as above.
+- **"Find a place to book"** on gaps.
+- **Small fixes:**
+  - The trip's Docs tab shows only that trip's documents plus general ones.
+  - Planned items on Home were labelled "Saved place".
+  - Removed outdated assistant wording, a TypeScript error, and the unused "Coming later" screen and template files.
+
+**Changes in the 24 Nov UX pass:**
+- **Native map.** Apple Maps on iOS and Google Maps on Android replace the web view and OpenStreetMap tiles. It has a full-screen layout, floating trip and type filters, and a bottom panel with Directions and Open.
+  - **Pin them from their addresses:** the phone looks up bookings and places that have no coordinates and saves the result.
+  - Every other module then has those coordinates too: the itinerary, Home and the map.
+- **Travel Space hub** replaces the "Manage space" dropdown. It has:
+  - a hero card with status, dates, timeline, nights sorted (with a progress bar) and booking count
+  - four quick actions: Add booking, Import, Add travel, Sync Gmail
+  - module tiles with live counts: Expenses, Map, Packing, Documents, Memories, Local life
+  - segmented tabs: Itinerary, Calendar, Bookings, Places
+
+  Edit, merge and archive moved behind •••.
+- **Modules connected:**
+  - Booking prices count toward the trip's cost, shown as "Booked in advance" in Expenses and included in the converted total. Cancelling a booking removes its cost.
+  - Saved places have **Plan a day**, which adds them to the itinerary as a plan. Plans can be removed by tapping them.
+  - The hub and Home read the same per-trip summary, `GET /travel-spaces/{id}/summary`.
+- **UI kit:**
+  - haptic feedback on buttons and selections
+  - a highlighted border on the field you're typing in
+  - softer card and button shadows
+  - accessible labels on pressable elements
+- **Android release note:** Android store builds need a Google Maps API key, set in the `react-native-maps` plugin (`androidGoogleMapsApiKey`) via `app.config.js`. iOS needs none.
+
+**Product requirements added 24 Nov (beyond PRD v2.0):**
+- **Trip photos sync from the gallery automatically.**
+  - **Window:** from the day before a trip starts until the day after it ends. Every photo taken is added to that trip with its date, coordinates and place name.
+  - **Views:** photos are browsed **by place** or **by day**, open full screen, and appear on the trip map.
+  - **Privacy:** images stay in the phone's gallery; Travel OS stores only the reference, date and location.
+  - **When it runs:** whenever the app opens (Home or Memories), at most every 30 minutes, and only after you've allowed photo access once. It never shows the permission prompt by itself.
+  - **Not yet:** syncing while the app is closed needs a development build with background tasks.
+- **Wallet holds real documents.** You upload or scan the passport, visa, insurance, driving licence, International Driving Permit, vaccination record and so on, and tap to show it full screen. A copy is kept on the phone, so it opens offline at a border. Name, number and expiry are optional. Files are private to the owner (`UPLOAD_DIR/documents/<user>/`, to move to S3 when hosted) and deleted with the account.
+- **"Your stay" means the current one.** Every screen shows the stay in progress today, else the next one, never just the first hotel booked. Home's ticket tiles open the full list of the trip's flights or stays.
+- **Typing is never hidden.** Sheets sit on top of the keyboard, forms scroll the field into view, money fields use a number pad, and "24,50" or "1 000" are understood. Errors name the field and what it needs.
+- **Expenses and monthly costs can be deleted** from Expenses and Living.
 
 ## 3. Launch scope (v1.0)
 

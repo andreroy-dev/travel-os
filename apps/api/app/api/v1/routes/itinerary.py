@@ -5,8 +5,9 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.api.ownership import owned
-from app.models.entities import ItineraryItem, TravelSpace
-from app.schemas import ItineraryOut, ItineraryViewOut
+from app.core.errors import AppError
+from app.models.entities import ItineraryItem, ItineraryKind, ItineraryStatus, TravelSpace
+from app.schemas import ItineraryOut, ItineraryViewOut, PlanIn
 
 router = APIRouter()
 
@@ -38,3 +39,37 @@ def read_itinerary(
         unlocated = [item for item in serialized if item.latitude is None or item.longitude is None]
         return ItineraryViewOut(view="map", located=located, unlocated=unlocated)
     return ItineraryViewOut(view="chronological", items=serialized)
+
+
+@router.post("/itinerary/plans", response_model=ItineraryOut, status_code=201)
+def create_plan(payload: PlanIn, user: CurrentUser, session: DbSession) -> ItineraryItem:
+    """Save a planned activity the traveller named. This does not create a booking."""
+    space = owned(session, TravelSpace, payload.travel_space_id, user.id)
+    if space.start_date and payload.starts_on < space.start_date:
+        raise AppError(422, "That date is before this trip.")
+    if space.end_date and payload.starts_on > space.end_date:
+        raise AppError(422, "That date is after this trip.")
+    item = ItineraryItem(
+        user_id=user.id,
+        travel_space_id=space.id,
+        kind=ItineraryKind.activity,
+        status=ItineraryStatus.planned,
+        title=payload.title.strip(),
+        starts_on=payload.starts_on,
+        ends_on=payload.starts_on,
+        location_label=payload.location_label,
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item
+
+
+@router.delete("/itinerary/plans/{item_id}", status_code=204)
+def delete_plan(item_id: UUID, user: CurrentUser, session: DbSession) -> None:
+    """Remove a plan the traveller added. Items that come from bookings, stays or journeys are removed there."""
+    item = owned(session, ItineraryItem, item_id, user.id)
+    if item.booking_id or item.stay_id or item.journey_id:
+        raise AppError(409, "This comes from a booking or stay. Change it there instead.")
+    session.delete(item)
+    session.commit()

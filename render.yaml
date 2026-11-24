@@ -31,3 +31,7 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: INBOUND_EMAIL_DOMAIN
+        sync: false
+      - key: INBOUND_EMAIL_SECRET
+        sync: false

@@ -171,6 +171,11 @@ class SavedPlaceIn(BaseModel):
     destination_name: str | None = None
 
 
+class CoordinatesIn(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
 class SavedPlaceStatusIn(BaseModel):
     status: SavedPlaceStatus
 
@@ -329,6 +334,8 @@ class DashboardOut(BaseModel):
     travel_space: TravelSpaceOut | None
     focus: list[FocusOut]
     today: list[ItineraryOut]
+    # Counted facts for the adaptive home (see services/dashboard_situation.py).
+    situation: dict = {}
 
 
 class EmailIn(BaseModel):
@@ -376,10 +383,57 @@ class ChatIn(BaseModel):
     conversation_id: UUID | None = None
 
 
+class ActionProposal(BaseModel):
+    """A change the companion will write only after the traveller confirms."""
+
+    kind: str
+    title: str
+    travel_space_id: UUID
+    start_date: date | None = None
+    end_date: date | None = None
+    starts_on: date | None = None
+
+
+class PlanIn(BaseModel):
+    travel_space_id: UUID
+    title: str = Field(min_length=1, max_length=200)
+    starts_on: date
+    location_label: str | None = Field(default=None, max_length=240)
+
+
 class ChatOut(BaseModel):
     conversation_id: UUID
     reply: str
     used_model: bool
+    proposal: ActionProposal | None = None
+
+
+class ForwardingOut(BaseModel):
+    address: str | None
+    available: bool
+
+
+class InboundMailIn(BaseModel):
+    to: str = Field(min_length=3, max_length=320)
+    subject: str = Field(default="", max_length=500)
+    text: str = Field(default="", max_length=200_000)
+
+
+class PromptDismissIn(BaseModel):
+    kind: str = Field(pattern="^(gap|move)$")
+    key: str = Field(min_length=10, max_length=32)
+
+
+class PushTokenIn(BaseModel):
+    token: str = Field(min_length=8, max_length=255)
+    platform: str = Field(default="ios", max_length=16)
+
+
+class ReminderOut(BaseModel):
+    kind: str
+    title: str
+    body: str
+    when: date
 
 
 class ItineraryViewOut(BaseModel):
@@ -388,6 +442,29 @@ class ItineraryViewOut(BaseModel):
     days: dict[str, list[ItineraryOut]] | None = None
     located: list[ItineraryOut] | None = None
     unlocated: list[ItineraryOut] | None = None
+
+
+class SavedListingIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    url: str = Field(min_length=8, max_length=500)
+    category: str = Field(default="accommodation", max_length=64)
+    travel_space_id: UUID | None = None
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class SavedListingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    name: str
+    url: str
+    category: str
+    travel_space_id: UUID | None
+    notes: str | None
+
+
+class ListingOpenOut(BaseModel):
+    url: str
+    disclosure: str = "This opens the provider. Travel OS does not make the booking."
 
 
 class InventoryOut(BaseModel):

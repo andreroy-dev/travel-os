@@ -1,3 +1,4 @@
+import hmac
 import hashlib
 import html
 import json
@@ -6,26 +7,46 @@ from io import BytesIO
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Form, Header, UploadFile
 from fastapi.responses import HTMLResponse
 from pypdf import PdfReader
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.api.ownership import owned
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.security import create_access_token, decode_access_token, read_return_to
 from app.models.entities import (
+    Booking,
     BookingSourceKind,
     Integration,
+    Journey,
+    Stay,
     IntegrationProvider,
     Notification,
     TravelSpace,
+    TravelSpaceStatus,
     User,
 )
-from app.schemas import ConnectIn, ConnectOut, EmailIn, IngestOut, IntegrationOut, NotificationOut
+from app.schemas import (
+    ConnectIn,
+    ConnectOut,
+    EmailIn,
+    InboundMailIn,
+    IngestOut,
+    IntegrationOut,
+    NotificationOut,
+    ReminderOut,
+)
 from app.services.gmail import authorization_url, connect_from_code, disconnect, sync_gmail, trip_search_query
 from app.services.ingest import InboundMessage, ingest_message, record_for_review
+from app.models.living import VisaLog, VisaSpan
+from app.services.reminders import upcoming_reminders
+from app.models.wallet import TravelDocument
+from app.services.documents import document_reminders
+from app.services.visa_days import count_stay, stay_reminders
+from app.services.stay_coverage import compute_coverage
 
 router = APIRouter()
 
@@ -56,11 +77,52 @@ def import_email(payload: EmailIn, user: CurrentUser, session: DbSession) -> Ing
     return _out(result)
 
 
+@router.post("/emails/inbound", response_model=IngestOut)
+def inbound_email(
+    payload: InboundMailIn,
+    session: DbSession,
+    x_inbound_secret: str | None = Header(default=None),
+) -> IngestOut:
+    """Mail provider webhook. The address trips+<user id>@<inbound domain> identifies the account.
+
+    Only the mail provider knows the shared secret, so nobody can post bookings into an account directly.
+    """
+    settings = get_settings()
+    if not (settings.inbound_email_domain and settings.inbound_email_secret):
+        raise AppError(404, "Forwarding import is not set up.")
+    if not hmac.compare_digest((x_inbound_secret or "").encode(), settings.inbound_email_secret.encode()):
+        raise AppError(401, "Not allowed.")
+    if payload.to.split("@", 1)[-1].lower() != settings.inbound_email_domain.lower():
+        raise AppError(404, "That forwarding address is not registered.")
+    local = payload.to.split("@", 1)[0].lower()
+    token = local.removeprefix("trips+")
+    try:
+        user_id = UUID(hex=token)
+    except ValueError as exc:
+        raise AppError(404, "That forwarding address is not registered.") from exc
+    user = session.get(User, user_id)
+    if user is None or not local.startswith("trips+"):
+        raise AppError(404, "That forwarding address is not registered.")
+    result = ingest_message(
+        session,
+        user.id,
+        InboundMessage(
+            external_id=f"forward:{hashlib.sha256((payload.subject + payload.text).encode()).hexdigest()[:24]}",
+            subject=payload.subject or "Forwarded confirmation",
+            body=payload.text,
+            source=BookingSourceKind.forward,
+        ),
+    )
+    session.commit()
+    return _out(result)
+
+
 @router.post("/documents", response_model=IngestOut)
 async def import_document(
     user: CurrentUser,
     session: DbSession,
     file: UploadFile = File(...),
+    travel_space_id: UUID | None = Form(None),
 ) -> IngestOut:
     raw = await file.read()
     name = file.filename or "upload"
@@ -79,6 +141,11 @@ async def import_document(
         )
         session.commit()
         return _out(result)
+    window = None
+    if travel_space_id is not None:
+        space = owned(session, TravelSpace, travel_space_id, user.id)
+        if space.start_date and space.end_date:
+            window = (space.start_date, space.end_date)
     if name.lower().endswith(".pdf"):
         try:
             text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(raw)).pages)
@@ -94,6 +161,8 @@ async def import_document(
             subject=name,
             body=text,
             source=BookingSourceKind.upload,
+            travel_space_id=travel_space_id,
+            date_window=window,
         ),
     )
     session.commit()
@@ -204,6 +273,69 @@ def _gmail_page(title: str, body: str, return_to: str | None = None) -> HTMLResp
 </body>
 </html>"""
     return HTMLResponse(page)
+
+
+@router.get("/reminders", response_model=list[ReminderOut])
+def list_reminders(user: CurrentUser, session: DbSession) -> list[dict]:
+    bookings = list(session.scalars(select(Booking).where(Booking.user_id == user.id)).all())
+    spaces = list(
+        session.scalars(
+            select(TravelSpace).where(
+                TravelSpace.user_id == user.id,
+                TravelSpace.status != TravelSpaceStatus.archived,
+            )
+        ).all()
+    )
+    gaps = []
+    today = datetime.now(UTC).date()
+    for space in spaces:
+        if space.start_date is None or space.end_date is None:
+            continue
+        space_bookings = [booking for booking in bookings if booking.travel_space_id == space.id]
+        stays = list(session.scalars(select(Stay).where(Stay.travel_space_id == space.id)).all())
+        journeys = list(session.scalars(select(Journey).where(Journey.travel_space_id == space.id)).all())
+        gaps.extend(compute_coverage(space.start_date, space.end_date, space_bookings, stays, journeys).gaps)
+    notes = upcoming_reminders(bookings, gaps, today)
+    logs = list(session.scalars(select(VisaLog).where(VisaLog.user_id == user.id)).all())
+    spans = list(session.scalars(select(VisaSpan).where(VisaSpan.user_id == user.id)).all())
+    grouped: dict = {}
+    for span in spans:
+        grouped.setdefault(span.visa_log_id, []).append(span)
+    notes.extend(
+        stay_reminders(
+            [
+                {
+                    "label": log.label,
+                    "count": count_stay(
+                        log.rule.value,
+                        [(span.entered_on, span.exited_on) for span in grouped.get(log.id, [])],
+                        today,
+                        log.allowed_days,
+                    ),
+                }
+                for log in logs
+            ],
+            today,
+        )
+    )
+    documents = list(session.scalars(select(TravelDocument).where(TravelDocument.user_id == user.id)).all())
+    notes.extend(document_reminders(documents, today))
+    existing = {
+        (note.kind, note.body)
+        for note in session.scalars(
+            select(Notification).where(Notification.user_id == user.id, Notification.read_at.is_(None))
+        ).all()
+    }
+    created = False
+    for note in notes:
+        key = (note["kind"], note["body"])
+        if key in existing:
+            continue
+        session.add(Notification(user_id=user.id, kind=note["kind"], title=note["title"], body=note["body"]))
+        created = True
+    if created:
+        session.commit()
+    return notes
 
 
 @router.get("/notifications", response_model=list[NotificationOut])

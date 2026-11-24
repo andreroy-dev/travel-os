@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { Platform, View } from 'react-native';
+import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SignInScreen from '@/app/sign-in';
@@ -59,20 +60,31 @@ function RootNavigator() {
           headerTitleStyle: { fontFamily: serif, fontSize: 18 },
           contentStyle: { backgroundColor: theme.paper },
           headerBackTitle: Platform.OS === 'ios' ? 'Back' : undefined,
+          animation: 'slide_from_right',
+          animationDuration: 280,
+          gestureEnabled: true,
+          fullScreenGestureEnabled: Platform.OS === 'ios',
         }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
         <Stack.Screen name="auth-callback" options={{ headerShown: false }} />
-        <Stack.Screen name="new-space" options={{ title: 'New space' }} />
+        <Stack.Screen name="new-space" options={{ title: 'New space', presentation: 'modal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="spaces/[id]" options={{ headerShown: false }} />
-        <Stack.Screen name="soon" options={{ title: 'Coming later' }} />
-        <Stack.Screen name="new-booking" options={{ title: 'Add booking' }} />
-        <Stack.Screen name="import-confirmation" options={{ title: 'Import' }} />
+        <Stack.Screen name="new-booking" options={{ title: 'Add booking', presentation: 'modal', animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="import-confirmation" options={{ title: 'Import', presentation: 'modal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="gmail" options={{ title: 'Gmail' }} />
         <Stack.Screen name="bookings/[id]" options={{ title: 'Booking' }} />
         <Stack.Screen name="merge-space" options={{ title: 'Merge spaces' }} />
         <Stack.Screen name="add-journey" options={{ title: 'Add travel', presentation: 'modal' }} />
         <Stack.Screen name="add-stay" options={{ title: 'Where are you staying?', presentation: 'modal' }} />
+        <Stack.Screen name="living/[id]" options={{ title: 'Living' }} />
+        <Stack.Screen name="memories/[id]" options={{ title: 'Photos' }} />
+        <Stack.Screen name="expenses" options={{ title: 'Expenses' }} />
+        <Stack.Screen name="map" options={{ headerShown: false }} />
+        <Stack.Screen name="document/[id]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="trip-bookings" options={{ title: 'Bookings' }} />
+        <Stack.Screen name="wallet" options={{ title: 'Travel Wallet' }} />
+        <Stack.Screen name="tools" options={{ title: 'Tools' }} />
       </Stack>
   );
 }

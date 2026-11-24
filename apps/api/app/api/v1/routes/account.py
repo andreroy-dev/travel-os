@@ -5,8 +5,8 @@ from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.security import create_access_token
-from app.models.entities import User, UserPreference
-from app.schemas import DevLoginIn, PreferenceIn, PreferenceOut, TokenOut, UserOut, UserUpdate
+from app.models.entities import User, UserPreference, PushToken
+from app.schemas import DevLoginIn, ForwardingOut, PreferenceIn, PreferenceOut, PushTokenIn, TokenOut, UserOut, UserUpdate
 from app.services.account_data import delete_account, export_account
 from app.services.validation import ensure_currency, ensure_timezone
 
@@ -44,6 +44,15 @@ def update_me(payload: UserUpdate, user: CurrentUser, session: DbSession) -> Use
     return user
 
 
+@router.get("/users/me/forwarding", response_model=ForwardingOut)
+def forwarding_address(user: CurrentUser) -> ForwardingOut:
+    settings = get_settings()
+    if not (settings.inbound_email_domain and settings.inbound_email_secret):
+        # Never hand out an address on a domain we don't receive mail for.
+        return ForwardingOut(address=None, available=False)
+    return ForwardingOut(address=f"trips+{user.id.hex}@{settings.inbound_email_domain}", available=True)
+
+
 @router.get("/users/me/export")
 def export_me(user: CurrentUser, session: DbSession) -> dict:
     return export_account(session, user)
@@ -77,6 +86,16 @@ def update_preferences(payload: PreferenceIn, user: CurrentUser, session: DbSess
         setattr(preference, field, value)
     session.commit()
     return preference
+
+
+@router.post("/push-tokens", status_code=204)
+def save_push_token(payload: PushTokenIn, user: CurrentUser, session: DbSession) -> None:
+    existing = session.scalar(
+        select(PushToken).where(PushToken.user_id == user.id, PushToken.token == payload.token)
+    )
+    if existing is None:
+        session.add(PushToken(user_id=user.id, token=payload.token.strip(), platform=payload.platform))
+        session.commit()
 
 
 @router.get("/auth/config")

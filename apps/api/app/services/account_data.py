@@ -23,10 +23,15 @@ from app.models.entities import (
     User,
     UserPreference,
 )
+from app.models.living import Expense, LocalEvent, LocalService, MonthlyBudget, NeighbourhoodNote, RecurringCost, VisaLog, VisaSpan
+from app.models.memories import JournalNote, MemoryPhoto
+from app.models.tools import PackingItem, TripBudget
+from app.models.wallet import EmergencyContact, TravelDocument
+from app.services import document_files
 from app.services.gmail import revoke_google_access
 
 # Never leave the server, even in the user's own export.
-_PRIVATE_COLUMNS = {"token_ciphertext", "supabase_user_id"}
+_PRIVATE_COLUMNS = {"token_ciphertext", "supabase_user_id", "file_key"}
 
 
 def _plain(value):
@@ -81,6 +86,20 @@ def export_account(session: Session, user: User) -> dict:
         "imported_emails": rows(EmailRecord),
         "integrations": rows(Integration),
         "notifications": rows(Notification),
+        "expenses": rows(Expense),
+        "recurring_costs": rows(RecurringCost),
+        "monthly_budgets": rows(MonthlyBudget),
+        "local_services": rows(LocalService),
+        "neighbourhood_notes": rows(NeighbourhoodNote),
+        "local_events": rows(LocalEvent),
+        "visa_logs": rows(VisaLog),
+        "visa_spans": rows(VisaSpan),
+        "memory_photos": rows(MemoryPhoto),
+        "journal_notes": rows(JournalNote),
+        "travel_documents": rows(TravelDocument),
+        "emergency_contacts": rows(EmergencyContact),
+        "packing_items": rows(PackingItem),
+        "trip_budgets": rows(TripBudget),
         "conversations": [_row(c) for c in conversations],
         "conversation_messages": [_row(m) for m in messages],
     }
@@ -94,8 +113,10 @@ def delete_account(session: Session, user: User) -> None:
     owned_locations = session.scalars(
         select(Location).where(Location.created_by_user_id == user.id)
     ).all()
+    user_id = user.id
     session.delete(user)
     session.flush()
     for location in owned_locations:
         session.delete(location)
     session.commit()
+    document_files.delete_all(user_id)

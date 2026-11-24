@@ -1,16 +1,56 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { ChoicePicker } from '@/components/Pickers';
+import { Sheet } from '@/components/Sheet';
 import { Button, ErrorNote, Field, Muted, theme } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
+import { addDays, prettyDay, weekday } from '@/lib/dates';
+import { success } from '@/lib/haptics';
 import type { SavedPlace } from '@/lib/types';
 
 const categories = ['restaurant', 'cafe', 'sight', 'museum', 'shop', 'nightlife', 'nature', 'place'] as const;
 const statuses = ['saved', 'considering', 'visited'] as const;
 
 /** Saved places for one Travel Space: add, mark visited, remove. */
-export function SpacePlaces({ spaceId, token }: { spaceId: string; token: string }) {
+export function SpacePlaces({
+  spaceId,
+  token,
+  start,
+  end,
+}: {
+  spaceId: string;
+  token: string;
+  start?: string | null;
+  end?: string | null;
+}) {
+  const [planning, setPlanning] = useState<SavedPlace | null>(null);
+  const [planDay, setPlanDay] = useState<string>(start ?? new Date().toISOString().slice(0, 10));
+  const [planned, setPlanned] = useState<string | null>(null);
+
+  function shiftDay(by: number) {
+    const next = addDays(planDay, by);
+    if ((start && next < start) || (end && next > end)) return;
+    setPlanDay(next);
+  }
+
+  async function plan() {
+    if (!planning) return;
+    try {
+      await api('/itinerary/plans', {
+        method: 'POST',
+        token,
+        body: { travel_space_id: spaceId, title: planning.name, starts_on: planDay, location_label: planning.address },
+      });
+      success();
+      setPlanned(`${planning.name} is on ${weekday(planDay)} ${prettyDay(planDay)}.`);
+      setPlanning(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not add it to the itinerary.');
+    }
+  }
+
   const [places, setPlaces] = useState<SavedPlace[]>([]);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -103,32 +143,57 @@ export function SpacePlaces({ spaceId, token }: { spaceId: string; token: string
                 <Text style={[styles.pillText, place.status === status && styles.pillTextOn]}>{status}</Text>
               </Pressable>
             ))}
+            <Pressable
+              onPress={() => {
+                setPlanned(null);
+                setPlanDay(start && new Date().toISOString().slice(0, 10) < start ? start : new Date().toISOString().slice(0, 10));
+                setPlanning(place);
+              }}
+              style={[styles.pill, styles.planPill]}>
+              <Text style={[styles.pillText, { color: '#fff' }]}>Plan a day</Text>
+            </Pressable>
           </View>
         </View>
       ))}
-      {adding ? (
-        <View style={styles.card}>
-          <Field label="Name" value={name} onChangeText={setName} placeholder="e.g. Café Central" />
-          <Field label="Address (optional)" value={address} onChangeText={setAddress} placeholder="Herrengasse 14, Vienna" />
-          <Field label="Notes (optional)" value={notes} onChangeText={setNotes} placeholder="Try the apple strudel" />
-          <View style={styles.pills}>
-            {categories.map((item) => (
-              <Pressable key={item} onPress={() => setCategory(item)} style={[styles.pill, category === item && styles.pillOn]}>
-                <Text style={[styles.pillText, category === item && styles.pillTextOn]}>{item}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <Button label="Save place" onPress={add} busy={busy} />
-          <Button label="Cancel" tone="quiet" onPress={() => setAdding(false)} />
+      {planned ? <Muted>{planned} You'll find it on the itinerary.</Muted> : null}
+      <Sheet visible={planning !== null} title={planning ? `Plan ${planning.name}` : 'Plan'} onClose={() => setPlanning(null)}>
+        <Muted>Adds it to that day's itinerary as a plan, not a booking.</Muted>
+        <View style={styles.stepper}>
+          <Pressable onPress={() => shiftDay(-1)} style={styles.step}>
+            <Text style={styles.stepLabel}>−</Text>
+          </Pressable>
+          <Text style={styles.stepValue}>
+            {weekday(planDay)} {prettyDay(planDay)}
+          </Text>
+          <Pressable onPress={() => shiftDay(1)} style={styles.step}>
+            <Text style={styles.stepLabel}>+</Text>
+          </Pressable>
         </View>
-      ) : (
-        <Button label="Save a place" tone="quiet" onPress={() => setAdding(true)} />
-      )}
+        <Button label="Add to itinerary" onPress={plan} />
+      </Sheet>
+      <Button label="Save a place" tone="quiet" onPress={() => setAdding(true)} />
+      <Sheet visible={adding} title="Save a place" onClose={() => setAdding(false)}>
+        <Field label="Name" value={name} onChangeText={setName} placeholder="A café, a museum" />
+        <Field label="Address" value={address} onChangeText={setAddress} placeholder="Optional" />
+        <Field label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional" />
+        <ChoicePicker
+          label="Kind"
+          value={category}
+          options={categories.map((item) => ({ value: item, label: item }))}
+          onChange={(value) => setCategory(value as (typeof categories)[number])}
+        />
+        <Button label="Save place" onPress={add} busy={busy} />
+      </Sheet>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  planPill: { backgroundColor: theme.clay },
+  stepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: theme.line },
+  step: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  stepLabel: { color: theme.moss, fontSize: 22, fontWeight: '700' },
+  stepValue: { flex: 1, textAlign: 'center', color: theme.ink, fontWeight: '600' },
   card: { backgroundColor: '#fff', borderRadius: 18, padding: 14, gap: 8 },
   row: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   title: { color: theme.ink, fontSize: 16, fontWeight: '700' },

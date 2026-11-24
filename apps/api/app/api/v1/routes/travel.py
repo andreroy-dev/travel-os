@@ -14,6 +14,7 @@ from app.models.entities import (
     DestinationKind,
     Journey,
     Location,
+    PromptDismissal,
     SavedPlace,
     Stay,
     TravelSpace,
@@ -25,8 +26,10 @@ from app.schemas import (
     JourneyIn,
     JourneyOut,
     SavedPlaceIn,
+    CoordinatesIn,
     SavedPlaceOut,
     SavedPlaceStatusIn,
+    PromptDismissIn,
     StayIn,
     StayCoverageOut,
     StayOut,
@@ -38,6 +41,9 @@ from app.schemas import (
 from app.services.catalog import find_or_create_destination
 from app.services.itinerary_sync import sync_journey_itinerary, sync_stay_itinerary
 from app.services.space_merge import merge_spaces
+from app.models.wallet import TravelDocument
+from app.services.dashboard_situation import booked_costs, build_situation
+from app.services.provider_links import DISCLOSURE, stay_search_links
 from app.services.space_status import status_from_dates
 from app.services.stay_coverage import compute_coverage
 from app.services.validation import ensure_date_order
@@ -191,10 +197,78 @@ def space_coverage(space_id: UUID, user: CurrentUser, session: DbSession) -> Sta
             select(Journey).where(Journey.user_id == user.id, Journey.travel_space_id == space.id)
         ).all()
     )
-    return StayCoverageOut.model_validate(
-        compute_coverage(space.start_date, space.end_date, bookings, stays, journeys),
-        from_attributes=True,
+    coverage = compute_coverage(space.start_date, space.end_date, bookings, stays, journeys)
+    dismissed = session.scalars(
+        select(PromptDismissal).where(
+            PromptDismissal.user_id == user.id,
+            PromptDismissal.travel_space_id == space.id,
+        )
+    ).all()
+    gap_keys = {row.prompt_key for row in dismissed if row.kind == "gap"}
+    move_keys = {row.prompt_key for row in dismissed if row.kind == "move"}
+    coverage.gaps = [gap for gap in coverage.gaps if gap.start.isoformat() not in gap_keys]
+    coverage.moves = [move for move in coverage.moves if move.date.isoformat() not in move_keys]
+    return StayCoverageOut.model_validate(coverage, from_attributes=True)
+
+
+@router.get("/travel-spaces/{space_id}/summary")
+def space_summary(space_id: UUID, user: CurrentUser, session: DbSession) -> dict:
+    """Live counts for the trip hub: nights, bookings, spend, packing, documents, photos, places."""
+    space = owned(session, TravelSpace, space_id, user.id)
+    today = date.today()
+    summary = build_situation(session, user.id, space, [space], today)
+    summary.pop("upcoming", None)
+    summary.pop("trips_completed", None)
+    summary["documents"] = session.scalar(
+        select(func.count()).select_from(TravelDocument).where(
+            TravelDocument.user_id == user.id,
+            or_(TravelDocument.travel_space_id == space.id, TravelDocument.travel_space_id.is_(None)),
+        )
+    ) or 0
+    summary["booked_costs"] = booked_costs(session, user.id, space.id)
+    return summary
+
+
+@router.get("/travel-spaces/{space_id}/stay-search")
+def stay_search(
+    space_id: UUID,
+    user: CurrentUser,
+    session: DbSession,
+    start: date,
+    end: date,
+    city: str | None = Query(default=None, max_length=160),
+) -> dict:
+    """Provider search links for a gap's dates. No listings, prices or availability."""
+    space = owned(session, TravelSpace, space_id, user.id)
+    if end <= start:
+        raise AppError(422, "The check-out date must be after check-in.")
+    place = (city or "").strip() or (space.destination.name if space.destination else "")
+    if not place:
+        raise AppError(422, "Add the city you want to stay in.")
+    return {"city": place, "links": stay_search_links(place, start, end), "disclosure": DISCLOSURE}
+
+
+@router.post("/travel-spaces/{space_id}/prompts/dismiss", status_code=204)
+def dismiss_prompt(space_id: UUID, payload: PromptDismissIn, user: CurrentUser, session: DbSession) -> None:
+    owned(session, TravelSpace, space_id, user.id)
+    existing = session.scalar(
+        select(PromptDismissal).where(
+            PromptDismissal.user_id == user.id,
+            PromptDismissal.travel_space_id == space_id,
+            PromptDismissal.kind == payload.kind,
+            PromptDismissal.prompt_key == payload.key,
+        )
     )
+    if existing is None:
+        session.add(
+            PromptDismissal(
+                user_id=user.id,
+                travel_space_id=space_id,
+                kind=payload.kind,
+                prompt_key=payload.key,
+            )
+        )
+        session.commit()
 
 
 @router.get("/travel-spaces/{space_id}/stays", response_model=list[StayOut])
@@ -365,6 +439,20 @@ def update_saved(
 ) -> SavedPlaceOut:
     place = owned(session, SavedPlace, place_id, user.id)
     place.status = payload.status
+    session.commit()
+    session.refresh(place)
+    return _saved_out(place)
+
+
+@router.patch("/saved-places/{place_id}/location", response_model=SavedPlaceOut)
+def locate_saved(
+    place_id: UUID, payload: CoordinatesIn, user: CurrentUser, session: DbSession
+) -> SavedPlaceOut:
+    """Save coordinates the phone looked up for a place's address."""
+    place = owned(session, SavedPlace, place_id, user.id)
+    location = session.get(Location, place.location_id)
+    location.latitude = payload.latitude
+    location.longitude = payload.longitude
     session.commit()
     session.refresh(place)
     return _saved_out(place)

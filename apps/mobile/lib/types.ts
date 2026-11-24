@@ -107,6 +107,24 @@ export type Dashboard = {
   travel_space: TravelSpace | null;
   focus: { key: string; label: string; available: boolean }[];
   today: ItineraryItem[];
+  situation?: Situation;
+};
+
+/** Counted facts for the adaptive home. Every field is optional; the mode decides which are shown. */
+export type Situation = {
+  upcoming?: { id: string; title: string; status: string; start_date: string | null; end_date: string | null; days_until: number | null }[];
+  trips_completed?: number;
+  visa?: { label: string; remaining_days: number; limit_days: number }[];
+  days_until?: number | null;
+  day_number?: number | null;
+  total_days?: number | null;
+  bookings?: { confirmed: number; planned: number };
+  nights?: { covered: number; total: number; gaps: StayGap[] };
+  tonight?: { status: string; title: string | null; night_index: number | null; night_count: number | null; booking_id: string | null };
+  packing?: { total: number; packed: number };
+  money?: { currency: string; combined: string; budget: string | null; remaining: string | null }[];
+  photos?: number;
+  places?: Record<string, number>;
 };
 
 export type SavedPlace = {

@@ -1,10 +1,11 @@
 import json
+import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -15,11 +16,16 @@ from app.models.entities import (
     Conversation,
     ConversationMessage,
     ItineraryItem,
+    SavedPlace,
+    Stay,
     TravelSpace,
     User,
     UserPreference,
 )
 from app.services.dashboard import determine_dashboard
+from app.services.living_summary import assistant_context
+from app.services.memories import memory_context
+from app.services.stay_coverage import compute_coverage
 
 
 def reply(
@@ -36,8 +42,11 @@ def reply(
     conversation = _conversation(session, user.id, travel_space_id, conversation_id)
     context = _context(session, user, travel_space_id)
     settings = get_settings()
+    override, proposal = command_reply(message, context)
     used_model = False
-    if settings.openai_api_key:
+    if override is not None:
+        content = override
+    elif settings.openai_api_key:
         _enforce_limit(session, user.id)
         content, usage = _openai_reply(message, context)
         used_model = True
@@ -52,6 +61,7 @@ def reply(
             )
     else:
         content = grounded_reply(message, context)
+        proposal = None
     session.add(ConversationMessage(conversation_id=conversation.id, role="user", content=message))
     session.add(
         ConversationMessage(conversation_id=conversation.id, role="assistant", content=content)
@@ -61,6 +71,7 @@ def reply(
         "conversation_id": conversation.id,
         "reply": content,
         "used_model": used_model,
+        "proposal": proposal,
     }
 
 
@@ -72,16 +83,54 @@ def grounded_reply(message: str, context: dict) -> str:
     ]
     items = context["itinerary"]
     if any(word in question for word in ("spent", "spend", "budget", "cost", "expense")):
+        money = context.get("money") or []
+        if not money:
+            return (
+                "You haven't logged any spending for this month yet, so there's nothing to total. "
+                "Add expenses from the trip's Expenses screen and I'll add them up. I won't estimate a figure."
+            )
+        lines = [f"{row['currency']} {row['combined']} in {row['month']}" for row in money]
         return (
-            "I can't total spending yet. Expense tracking is not in this version, "
-            "and I won't estimate a figure."
+            "Amounts you entered this month, added without conversion:\n" + "\n".join(lines)
         )
+    if any(word in question for word in ("recap", "journal", "highlight", "my photos")):
+        photos = context.get("memory_photos") or []
+        notes = context.get("journal_notes") or []
+        if not photos and not notes:
+            return "I don't have photos or journal notes saved for this trip, and I won't invent a recap."
+        lines = [f"{note['on_date']}: {note['body']}" for note in notes]
+        for photo in photos:
+            when = photo["taken_on"] or "date not in the photo"
+            caption = photo["caption"] or photo["filename"]
+            place = f" · {photo['place_label']}" if photo.get("place_label") else ""
+            lines.append(f"{when}: {caption}{place}")
+        return "From the notes and photos you saved:\n" + "\n".join(lines)
     if "weather" in question or "forecast" in question:
         return "I don't have a live weather source connected, so I won't guess the forecast."
+    if any(word in question for word in ("gym", "coworking", "cafe", "café", "restaurant near")):
+        return _places_or_refusal(question, context)
+    if any(word in question for word in ("recommend", "what can i do", "things to do", "this weekend")):
+        return _places_or_refusal(question, context)
     if any(word in question for word in ("available", "availability", "price", "cheapest")):
         return (
             "I don't have live provider inventory connected, so I can't quote availability or prices."
         )
+    if any(word in question for word in ("gap", "open night", "nights open", "nights are open", "which nights", "nowhere to stay")):
+        gaps = context.get("gaps") or []
+        if not gaps:
+            return "Every night in this trip has a stay saved."
+        lines = [f"{gap['start']} to {gap['end']} ({gap['nights']} nights)" for gap in gaps]
+        return "These nights have no stay saved:\n" + "\n".join(lines)
+    if "next flight" in question or "next departure" in question:
+        flights = [booking for booking in bookings if booking["category"] == "flight" and booking["starts_at"]]
+        today = context.get("today") or ""
+        upcoming = sorted(
+            (booking for booking in flights if booking["starts_at"][:10] >= today),
+            key=lambda booking: booking["starts_at"],
+        )
+        if not upcoming:
+            return "I don't have an upcoming flight saved."
+        return "Your next saved flight:\n" + _format_booking(upcoming[0])
     if "tomorrow" in question or "today" in question or "planned" in question or "itinerary" in question:
         when = "tomorrow" if "tomorrow" in question else "today" if "today" in question else None
         chosen = [item for item in items if when is None or item["relative_day"] == when]
@@ -118,6 +167,106 @@ def grounded_reply(message: str, context: dict) -> str:
         "I answer from your saved Travel Spaces, bookings, and itinerary. "
         "I don't have an answer for that in the records I can see."
     )
+
+
+_DATE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+
+
+def command_reply(message: str, context: dict) -> tuple[str | None, dict | None]:
+    """Turn a direct instruction into a confirmable change. Nothing is written here."""
+    proposal = stay_proposal(message, context)
+    if proposal is not None:
+        return (
+            f"I can save “{proposal['title']}” from {proposal['start_date']} to {proposal['end_date']}. "
+            "Confirm to add it. This is a stay you named, not a hotel booking.",
+            proposal,
+        )
+    question = message.lower().strip()
+    space_id = context.get("travel_space_id")
+    space = context.get("travel_space") or {}
+    if space_id is None:
+        return None, None
+    if question.startswith("save place ") or question.startswith("remember place "):
+        title = message.split(" ", 2)[-1].strip(" .")[:200]
+        if not title:
+            return None, None
+        return (
+            f"I can save “{title}” as a place you named. Confirm to keep it.",
+            {"kind": "save_place", "title": title, "travel_space_id": space_id},
+        )
+    if not (question.startswith("add ") or question.startswith("plan ")):
+        return None, None
+    day = _plan_day(message, context)
+    if day is None:
+        return None, None
+    start = space.get("start_date")
+    end = space.get("end_date")
+    if (start and day < start) or (end and day > end):
+        return "That date is outside this trip, so I didn't add it.", None
+    title = _DATE.sub("", message)
+    title = re.sub(r"^(please\s+)?(add|plan)\s+", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+on\s*$", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s+tomorrow\s*$", "", title, flags=re.IGNORECASE).strip(" .")[:200]
+    if not title:
+        return None, None
+    proposal = {
+        "kind": "add_plan",
+        "title": title,
+        "starts_on": day,
+        "travel_space_id": space_id,
+    }
+    return (
+        f"I can add “{title}” on {day} as a planned item. It is not a confirmed booking. Confirm to save it.",
+        proposal,
+    )
+
+
+def _plan_day(message: str, context: dict) -> str | None:
+    found = _DATE.search(message)
+    if found:
+        return found.group(1)
+    if "tomorrow" in message.lower() and context.get("today"):
+        return (date.fromisoformat(context["today"]) + timedelta(days=1)).isoformat()
+    return None
+
+
+def _places_or_refusal(question: str, context: dict) -> str:
+    places = context.get("saved_places") or []
+    services = context.get("local_services") or []
+    named_places = [place for place in places if place["category"] in question or place["name"].lower() in question]
+    named_services = [
+        service for service in services if service["category"] in question or service["name"].lower() in question
+    ]
+    local = any(word in question for word in ("gym", "coworking", "cafe", "café"))
+    if local and not named_places and not named_services:
+        return "I don't have a saved place for that, and I won't invent one."
+    chosen = named_services or named_places or places
+    if not chosen:
+        return "I don't have a saved place for that, and I won't invent one."
+    return "Places you saved:\n" + "\n".join(item["name"] for item in chosen)
+
+
+def stay_proposal(message: str, context: dict) -> dict | None:
+    """Offer to save a stay for a known gap. The app writes it only after confirm."""
+    question = message.lower()
+    if not any(phrase in question for phrase in ("add a stay", "i'm staying", "im staying", "staying with", "fill the gap")):
+        return None
+    gaps = context.get("gaps") or []
+    space_id = context.get("travel_space_id")
+    if not gaps or space_id is None:
+        return None
+    gap = gaps[0]
+    title = "Your stay"
+    marker = "staying with "
+    if marker in question:
+        title = message[question.index(marker) + len(marker) :].strip(" .")[:120] or title
+    return {
+        "kind": "add_stay",
+        "title": title,
+        "start_date": gap["start"],
+        "end_date": gap["end"],
+        "travel_space_id": space_id,
+    }
 
 
 def _format_bookings(bookings: list[dict]) -> str:
@@ -161,14 +310,38 @@ def _context(session: Session, user: User, travel_space_id: uuid.UUID | None) ->
         item_query = item_query.where(ItineraryItem.travel_space_id == travel_space_id)
     bookings = session.scalars(booking_query).all()
     items = session.scalars(item_query.order_by(ItineraryItem.starts_on, ItineraryItem.starts_at)).all()
+    stays = []
+    if travel_space_id is not None:
+        stays = list(
+            session.scalars(select(Stay).where(Stay.user_id == user.id, Stay.travel_space_id == travel_space_id)).all()
+        )
     focus_space = None
     if travel_space_id is not None:
         focus_space = next((space for space in spaces if space.id == travel_space_id), None)
     elif mode.travel_space is not None:
         focus_space = mode.travel_space
+    gaps = []
+    if focus_space is not None and focus_space.start_date and focus_space.end_date:
+        coverage = compute_coverage(focus_space.start_date, focus_space.end_date, list(bookings), stays, [])
+        gaps = [{"start": gap.start.isoformat(), "end": gap.end.isoformat(), "nights": gap.nights} for gap in coverage.gaps]
+    place_rows = list(
+        session.scalars(
+            select(SavedPlace).where(SavedPlace.user_id == user.id).options(selectinload(SavedPlace.location))
+        ).all()
+    )
+    if focus_space is not None:
+        place_rows = [
+            place for place in place_rows if place.travel_space_id in (None, focus_space.id)
+        ]
     return {
         "today": today.isoformat(),
+        "travel_space_id": focus_space.id if focus_space is not None else None,
         "dashboard_mode": mode.mode,
+        "gaps": gaps,
+        "saved_places": [
+            {"name": place.location.name, "category": (place.location.category or "place").lower()}
+            for place in place_rows
+        ],
         "travel_space": None
         if focus_space is None
         else {
@@ -207,6 +380,8 @@ def _context(session: Session, user: User, travel_space_id: uuid.UUID | None) ->
             }
             for item in items
         ],
+        **assistant_context(session, user.id, focus_space.id if focus_space is not None else None, today),
+        **memory_context(session, user.id, focus_space.id if focus_space is not None else None),
     }
 
 

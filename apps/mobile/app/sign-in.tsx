@@ -4,6 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Appear } from '@/components/motion';
 import { Button, ErrorNote, Field, serif, theme } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { useSession } from '@/lib/session';
@@ -102,6 +103,7 @@ export default function SignInScreen() {
 
   return (
     <View style={styles.page}>
+      <Appear>
       <View style={styles.column}>
         <Text style={styles.mark}>Travel OS</Text>
         <Text style={styles.lead}>
@@ -121,10 +123,10 @@ export default function SignInScreen() {
             ) : null}
             <Button label="Continue with Google" tone="quiet" onPress={google} busy={busy === 'google'} />
             <Text style={styles.or}>or use your email</Text>
-            <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" />
+            <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" keyboardType="email-address" />
             {codeSent ? (
               <>
-                <Field label="6-digit code" value={code} onChangeText={setCode} placeholder="123456" />
+                <Field label="6-digit code" value={code} onChangeText={setCode} placeholder="123456" keyboardType="number-pad" />
                 <Button label="Sign in" onPress={verifyCode} busy={busy === 'verify'} />
                 <Pressable onPress={sendCode}>
                   <Text style={styles.link}>Send a new code</Text>
@@ -145,7 +147,7 @@ export default function SignInScreen() {
         {devAllowed && showDev ? (
           <>
             <Field label="Name" value={name} onChangeText={setName} placeholder="Andre" />
-            {supabase ? null : <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" />}
+            {supabase ? null : <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" keyboardType="email-address" />}
             <Button label="Continue" onPress={devSignIn} busy={busy === 'dev'} />
             <Text style={styles.note}>Development sign-in: email only, for testing. Not available in store builds.</Text>
           </>
@@ -153,6 +155,7 @@ export default function SignInScreen() {
 
         <ErrorNote message={error} />
       </View>
+      </Appear>
     </View>
   );
 }

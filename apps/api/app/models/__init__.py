@@ -1,4 +1,6 @@
 from app.models.base import Base
+from app.models.fx import FxSnapshot
+from app.models.tools import PackingItem, TripBudget
 from app.models.entities import (
     AiUsage,
     Booking,
@@ -9,14 +11,30 @@ from app.models.entities import (
     Integration,
     ItineraryItem,
     Journey,
+    ListingClick,
     Location,
     Notification,
+    PromptDismissal,
+    PushToken,
+    SavedListing,
     SavedPlace,
     Stay,
     TravelSpace,
     User,
     UserPreference,
 )
+from app.models.living import (
+    Expense,
+    LocalEvent,
+    LocalService,
+    MonthlyBudget,
+    NeighbourhoodNote,
+    RecurringCost,
+    VisaLog,
+    VisaSpan,
+)
+from app.models.memories import JournalNote, MemoryPhoto
+from app.models.wallet import EmergencyContact, TravelDocument
 
 __all__ = [
     "AiUsage",
@@ -26,14 +44,33 @@ __all__ = [
     "ConversationMessage",
     "Destination",
     "EmailRecord",
+    "EmergencyContact",
+    "Expense",
+    "FxSnapshot",
     "Integration",
     "ItineraryItem",
     "Journey",
+    "JournalNote",
+    "ListingClick",
+    "LocalEvent",
+    "LocalService",
     "Location",
+    "MemoryPhoto",
+    "MonthlyBudget",
+    "NeighbourhoodNote",
     "Notification",
+    "PackingItem",
+    "PromptDismissal",
+    "PushToken",
+    "RecurringCost",
+    "SavedListing",
     "SavedPlace",
     "Stay",
+    "TravelDocument",
+    "TripBudget",
     "TravelSpace",
     "User",
     "UserPreference",
+    "VisaLog",
+    "VisaSpan",
 ]

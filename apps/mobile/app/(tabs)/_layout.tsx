@@ -1,12 +1,27 @@
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { Tabs } from 'expo-router';
+import { useEffect } from 'react';
 import { Platform, View } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
+import { useReducedMotion } from '@/components/motion';
 import { theme } from '@/components/ui';
 
 function icon(name: SFSymbol) {
-  return ({ focused }: { focused: boolean }) => (
-    <SymbolView name={name} tintColor={focused ? theme.moss : theme.muted} size={22} />
+  return ({ focused }: { focused: boolean }) => <TabIcon name={name} focused={focused} />;
+}
+
+function TabIcon({ name, focused }: { name: SFSymbol; focused: boolean }) {
+  const reduced = useReducedMotion();
+  const scale = useSharedValue(focused ? 1 : 0.92);
+  useEffect(() => {
+    scale.value = reduced ? 1 : withSpring(focused ? 1 : 0.92, { damping: 14, stiffness: 260 });
+  }, [focused, reduced, scale]);
+  const animated = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <Animated.View style={animated}>
+      <SymbolView name={name} tintColor={focused ? theme.moss : theme.muted} size={22} />
+    </Animated.View>
   );
 }
 

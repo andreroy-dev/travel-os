@@ -418,6 +418,71 @@ class ItineraryItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SavedListing(Base):
+    """A link the user saved. It is not a booking and stores no verified price."""
+
+    __tablename__ = "saved_listings"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    travel_space_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("travel_spaces.id", ondelete="SET NULL"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(64), default="accommodation")
+    url: Mapped[str] = mapped_column(String(500))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ListingClick(Base):
+    __tablename__ = "listing_clicks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    saved_listing_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("saved_listings.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PushToken(Base):
+    __tablename__ = "push_tokens"
+    __table_args__ = (UniqueConstraint("user_id", "token", name="uq_push_token"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    token: Mapped[str] = mapped_column(String(255))
+    platform: Mapped[str] = mapped_column(String(16), default="ios")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PromptDismissal(Base):
+    """A gap or move prompt the traveller marked as sorted, without deleting bookings."""
+
+    __tablename__ = "prompt_dismissals"
+    __table_args__ = (
+        UniqueConstraint("user_id", "travel_space_id", "kind", "prompt_key", name="uq_prompt_dismissal"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    travel_space_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("travel_spaces.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    prompt_key: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 

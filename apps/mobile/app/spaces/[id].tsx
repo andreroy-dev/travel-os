@@ -1,14 +1,19 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { FadePanel, PressableScale, SkeletonList, Toast } from '@/components/motion';
 import { Button, ErrorNote, Muted, Screen, theme } from '@/components/ui';
 import { SpaceCalendar } from '@/components/SpaceCalendar';
+import { SpaceHub, type SpaceSummary } from '@/components/SpaceHub';
 import { SpacePlaces } from '@/components/SpacePlaces';
+import { StaySearchSheet } from '@/components/StaySearchSheet';
 import { ApiError, api } from '@/lib/api';
+import { loadCached } from '@/lib/cache';
 import { bookingSections } from '@/lib/bookingFields';
 import { confirmAction } from '@/lib/confirm';
 import { prettyDay, weekday } from '@/lib/dates';
+import { success, tap } from '@/lib/haptics';
 import { useSession } from '@/lib/session';
 import type {
   Booking,
@@ -22,14 +27,10 @@ import type {
   TravelSpace,
 } from '@/lib/types';
 
-const tabs = ['Itinerary', 'Calendar', 'Bookings', 'Places', 'Photos', 'Budget', 'Docs'] as const;
+const tabs = ['Itinerary', 'Calendar', 'Bookings', 'Places'] as const;
+type SpaceTab = (typeof tabs)[number];
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function dates(space: TravelSpace) {
-  if (!space.start_date && !space.end_date) return 'Dates not set';
-  return [space.start_date, space.end_date ?? 'open-ended'].filter(Boolean).join(' – ');
-}
 
 function clockLabel(value: string | null) {
   if (!value || value.length < 16) return '';
@@ -55,7 +56,8 @@ function tripDays(start: string, end: string) {
   const days: string[] = [];
   const cursor = new Date(`${start}T00:00:00`);
   const last = new Date(`${end}T00:00:00`);
-  while (cursor <= last && days.length < 62) {
+  // Long stays and open-ended spaces can run for months; coverage is computed up to 400 nights.
+  while (cursor <= last && days.length < 400) {
     const month = String(cursor.getMonth() + 1).padStart(2, '0');
     const day = String(cursor.getDate()).padStart(2, '0');
     days.push(`${cursor.getFullYear()}-${month}-${day}`);
@@ -72,34 +74,51 @@ export default function SpaceDetailScreen() {
   const [items, setItems] = useState<ItineraryItem[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [coverage, setCoverage] = useState<StayCoverage | null>(null);
-  const [tab, setTab] = useState<(typeof tabs)[number]>('Itinerary');
+  const [tab, setTab] = useState<SpaceTab>('Itinerary');
+  const [summary, setSummary] = useState<SpaceSummary | null>(null);
   const [day, setDay] = useState<string | null>(null);
+  const [month, setMonth] = useState<string | null>(null);
+  const [searchGap, setSearchGap] = useState<StayGap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [gmail, setGmail] = useState<string>('disconnected');
   const [syncing, setSyncing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 2400);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const load = useCallback(async () => {
     if (!token || !id) return;
     setRefreshing(true);
     try {
-      const [nextSpace, nextBookings, plan, integration, nextCoverage] = await Promise.all([
-        api<TravelSpace>(`/travel-spaces/${id}`, { token }),
-        api<Booking[]>(`/bookings?travel_space_id=${id}`, { token }),
-        api<{ items: ItineraryItem[] }>(`/itinerary?view=chronological&travel_space_id=${id}`, { token }),
-        api<Integration>('/integrations/gmail', { token }),
-        api<StayCoverage>(`/travel-spaces/${id}/coverage`, { token }),
-      ]);
+      const [nextSpace, nextBookings, plan, integration, nextCoverage] = await loadCached(
+        `space:${id}:${token}`,
+        () =>
+          Promise.all([
+            api<TravelSpace>(`/travel-spaces/${id}`, { token }),
+            api<Booking[]>(`/bookings?travel_space_id=${id}`, { token }),
+            api<{ items: ItineraryItem[] }>(`/itinerary?view=chronological&travel_space_id=${id}`, { token }),
+            api<Integration>('/integrations/gmail', { token }),
+            api<StayCoverage>(`/travel-spaces/${id}/coverage`, { token }),
+          ]),
+      );
       setGmail(integration.status);
       setCoverage(nextCoverage);
       setSpace(nextSpace);
       setBookings(nextBookings);
       setItems(plan.items ?? []);
+      setSummary(await api<SpaceSummary>(`/travel-spaces/${id}/summary`, { token }));
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not open this space.');
     } finally {
       setRefreshing(false);
+      setLoaded(true);
     }
   }, [token, id]);
 
@@ -120,6 +139,8 @@ export default function SpaceDetailScreen() {
       if (filed === 0) {
         setError('No bookings from the past year matched these dates.');
       } else {
+        success();
+        setNotice(filed === 1 ? 'Filed 1 booking.' : `Filed ${filed} bookings.`);
         setTab('Itinerary');
       }
     } catch (err) {
@@ -132,7 +153,13 @@ export default function SpaceDetailScreen() {
   const days = space?.start_date && space.end_date
     ? tripDays(space.start_date, space.end_date)
     : [...new Set(items.map((item) => item.starts_on).filter((value): value is string => Boolean(value)))];
-  const visibleDays = day ? days.filter((value) => value === day) : days;
+  // Long trips are browsed a month at a time so the screen stays light.
+  const longTrip = days.length > 45;
+  const tripMonths = [...new Set(days.map((value) => value.slice(0, 7)))];
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const activeMonth = month ?? (tripMonths.includes(thisMonth) ? thisMonth : tripMonths[0] ?? null);
+  const monthDays = longTrip && activeMonth ? days.filter((value) => value.startsWith(activeMonth)) : days;
+  const visibleDays = day ? days.filter((value) => value === day) : monthDays;
 
   const nightByDate = new Map<string, CoverageNight>((coverage?.nights ?? []).map((night) => [night.date, night]));
   const gapByStart = new Map<string, StayGap>((coverage?.gaps ?? []).map((gap) => [gap.start, gap]));
@@ -189,6 +216,18 @@ export default function SpaceDetailScreen() {
     }
   }
 
+  async function removePlan(item: ItineraryItem) {
+    if (!token) return;
+    const ok = await confirmAction('Remove this plan?', `"${item.title}" will be taken off the itinerary.`, 'Remove');
+    if (!ok) return;
+    try {
+      await api(`/itinerary/plans/${item.id}`, { method: 'DELETE', token });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not remove this plan.');
+    }
+  }
+
   function addJourney(move?: StayMove) {
     router.push({
       pathname: '/add-journey',
@@ -200,48 +239,77 @@ export default function SpaceDetailScreen() {
     router.push({ pathname: '/add-stay', params: { spaceId: id, start: gap.start, end: gap.end } });
   }
 
+  async function dismissPrompt(kind: 'gap' | 'move', key: string) {
+    if (!token || !id) return;
+    try {
+      await api(`/travel-spaces/${id}/prompts/dismiss`, { method: 'POST', token, body: { kind, key } });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not hide that prompt.');
+    }
+  }
+
   return (
     <Screen safeTop onRefresh={load} refreshing={refreshing}>
-      <View style={styles.hero}>
-        <Pressable onPress={() => router.back()} style={styles.back}>
-          <Text style={styles.backLabel}>‹</Text>
-        </Pressable>
-        <Text style={styles.heroTitle}>{space?.title ?? 'Travel Space'}</Text>
-        <Text style={styles.heroMeta}>
-          {space ? `${space.status} · ${dates(space)}` : ' '}
-        </Text>
-      </View>
-      {archived ? (
-        <View style={styles.archivedNote}>
-          <Text style={styles.itemTitle}>This space is archived</Text>
-          <Muted>It is hidden from your trips. Everything inside it is still here.</Muted>
-          <Button label="Restore to active spaces" onPress={restore} />
-        </View>
-      ) : null}
-      <View style={styles.tabs}>
+      {space ? (
+        <SpaceHub
+          space={space}
+          summary={summary}
+          gmail={gmail}
+          syncing={syncing}
+          onSync={() => void syncMail()}
+          onArchive={() => void archive()}
+          onRestore={() => void restore()}
+        />
+      ) : (
+        <SkeletonList count={2} />
+      )}
+      <View style={styles.segment}>
         {tabs.map((item) => (
-          <Pressable key={item} onPress={() => setTab(item)} style={[styles.tab, tab === item && styles.tabOn]}>
-            <Text style={[styles.tabLabel, tab === item && styles.tabLabelOn]}>{item}</Text>
-          </Pressable>
+          <PressableScale
+            key={item}
+            onPress={() => {
+              tap();
+              setTab(item);
+            }}
+            style={[styles.segmentItem, tab === item && styles.segmentOn]}>
+            <Text style={[styles.segmentLabel, tab === item && styles.segmentLabelOn]}>{item}</Text>
+          </PressableScale>
         ))}
       </View>
-      {gmail === 'connected' ? (
-        <Button label="Sync bookings and itinerary" onPress={syncMail} busy={syncing} />
-      ) : (
-        <Button label="Connect Gmail" tone="quiet" onPress={() => router.push('/gmail')} />
-      )}
       <ErrorNote message={error} />
+      <Toast message={notice} />
+      {!loaded ? <SkeletonList count={4} /> : null}
 
-      {tab === 'Itinerary' ? (
-        <>
+      {loaded && tab === 'Itinerary' ? (
+        <FadePanel panelKey={`itinerary-${day ?? 'all'}`}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.days}>
-            <Pressable onPress={() => setDay(null)} style={[styles.day, day === null && styles.dayOn]}>
-              <Text style={[styles.dayLabel, day === null && styles.dayLabelOn]}>All</Text>
-            </Pressable>
-            {days.map((value) => (
-              <Pressable key={value} onPress={() => setDay(value)} style={[styles.day, day === value && styles.dayOn]}>
-                <Text style={[styles.dayLabel, day === value && styles.dayLabelOn]}>{value.slice(5)}</Text>
-              </Pressable>
+            {longTrip
+              ? tripMonths.map((value) => {
+                  const on = day === null && value === activeMonth;
+                  const [y, m] = value.split('-');
+                  return (
+                    <PressableScale
+                      key={value}
+                      onPress={() => {
+                        setDay(null);
+                        setMonth(value);
+                      }}
+                      style={[styles.day, on && styles.dayOn]}>
+                      <Text style={[styles.dayLabel, on && styles.dayLabelOn]}>{`${months[Number(m) - 1]} ${y.slice(2)}`}</Text>
+                    </PressableScale>
+                  );
+                })
+              : null}
+            {longTrip ? null : (
+              <PressableScale onPress={() => setDay(null)} style={[styles.day, day === null && styles.dayOn]}>
+                <Text style={[styles.dayLabel, day === null && styles.dayLabelOn]}>All</Text>
+              </PressableScale>
+            )}
+            {(longTrip ? [] : days).map((value) => (
+              <PressableScale key={value} onPress={() => setDay(value)} style={[styles.day, day === value && styles.dayOn]}>
+                <Text style={[styles.dayLabel, day === value && styles.dayLabelOn]}>{`${weekday(value).slice(0, 3)} ${Number(value.slice(8))}`}</Text>
+              </PressableScale>
             ))}
           </ScrollView>
           {coverage && coverage.total_nights > 0 ? (
@@ -266,42 +334,43 @@ export default function SpaceDetailScreen() {
             const move = moveByDate.get(dayKey);
             const lastDay = space?.end_date === dayKey;
             return (
-              <View key={dayKey} style={styles.group}>
-                <Text style={styles.section}>
-                  {weekday(dayKey)} · {prettyDate(dayKey)}
-                </Text>
+              <View key={dayKey} style={styles.dayCard}>
+                <View style={styles.dayHead}>
+                  <Text style={styles.dayName}>{weekday(dayKey)}</Text>
+                  <Text style={styles.dayDate}>{prettyDate(dayKey)}</Text>
+                </View>
                 {move && !move.has_transport ? (
-                  <View style={styles.move}>
-                    <Text style={styles.nightTitle}>Moving to {move.to_title}</Text>
-                    <Muted>How are you getting there from {move.from_title}?</Muted>
-                    <Pressable onPress={() => addJourney(move)} style={styles.moveAction}>
-                      <Text style={styles.moveActionLabel}>Add travel</Text>
-                    </Pressable>
+                  <View style={styles.prompt}>
+                    <Text style={styles.itemTitle}>Travel to {move.to_title}</Text>
+                    <Muted>From {move.from_title}</Muted>
+                    <View style={styles.promptActions}>
+                      <Button label="Add travel" onPress={() => addJourney(move)} />
+                      <Button label="I've sorted this" tone="quiet" onPress={() => dismissPrompt('move', move.date)} />
+                    </View>
                   </View>
                 ) : null}
                 {dayItems.map((item) => (
-                  <Pressable
+                  <PressableScale
                     key={item.id}
-                    disabled={!item.booking_id && !item.journey_id}
                     onPress={() => {
                       if (item.booking_id) router.push({ pathname: '/bookings/[id]', params: { id: item.booking_id } });
                       else if (item.journey_id) void removeJourney(item);
+                      else void removePlan(item);
                     }}
-                    style={styles.item}>
-                    <View style={{ flex: 1 }}>
+                    style={styles.slot}>
+                    <Text style={styles.slotTime}>{clockLabel(item.starts_at) || '—'}</Text>
+                    <View style={styles.rail}>
+                      <View style={styles.dot} />
+                    </View>
+                    <View style={styles.slotBody}>
                       <Text style={styles.itemTitle}>{item.title}</Text>
                       <Muted>
-                        {[
-                          item.kind === 'accommodation' ? 'check-in' : item.kind.replaceAll('_', ' '),
-                          item.status === 'confirmed' ? 'Confirmed' : 'Planned',
-                          item.journey_id ? 'tap to remove' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                        {item.kind === 'accommodation' ? 'Check-in' : item.kind.replaceAll('_', ' ')}
+                        {item.status === 'confirmed' ? ' · Confirmed' : item.status === 'planned' ? ' · Planned' : ''}
+                        {item.journey_id || (!item.booking_id && item.status === 'planned') ? ' · tap to remove' : ''}
                       </Muted>
                     </View>
-                    <Text style={styles.clock}>{clockLabel(item.starts_at)}</Text>
-                  </Pressable>
+                  </PressableScale>
                 ))}
                 {night && night.status !== 'gap' ? (
                   <NightRow
@@ -311,30 +380,29 @@ export default function SpaceDetailScreen() {
                   />
                 ) : null}
                 {gap ? (
-                  <View style={styles.gap}>
+                  <View style={styles.prompt}>
                     <Text style={styles.itemTitle}>
-                      No place to stay for {gap.nights} {gap.nights === 1 ? 'night' : 'nights'}
+                      {gap.nights} {gap.nights === 1 ? 'night' : 'nights'} open
                     </Text>
                     <Muted>
-                      Nothing is booked from the night of {prettyDay(gap.start)} until {prettyDay(gap.end)}. Are you staying
-                      with a friend, or somewhere else we should add to your itinerary?
+                      {prettyDay(gap.start)} to {prettyDay(gap.end)}
                     </Muted>
-                    <View style={styles.gapActions}>
+                    <View style={styles.promptActions}>
                       <Button label="I'm staying somewhere" onPress={() => addStay(gap)} />
-                      <Button label="Find a place to book" tone="quiet" onPress={() => router.push('/discover')} />
+                      <Button label="Find a place to book" tone="quiet" onPress={() => setSearchGap(gap)} />
+                      <Button label="I've sorted this" tone="quiet" onPress={() => dismissPrompt('gap', gap.start)} />
                     </View>
                   </View>
                 ) : null}
-                {night?.status === 'gap' && !gap ? <Muted>No place to stay yet (see above).</Muted> : null}
-                {lastDay ? <Muted>Last day of the trip — no stay needed tonight.</Muted> : null}
+                {lastDay && !dayItems.length && !night ? <Muted>Departure day.</Muted> : null}
               </View>
             );
           })}
-        </>
+        </FadePanel>
       ) : null}
 
-      {tab === 'Bookings' ? (
-        <>
+      {loaded && tab === 'Bookings' ? (
+        <FadePanel panelKey="bookings">
           {bookingSections
             .filter((section) => section.always || bookings.some((booking) => section.categories.includes(booking.category)))
             .map((section) => {
@@ -344,7 +412,7 @@ export default function SpaceDetailScreen() {
               <Text style={styles.section}>{section.label}</Text>
               {rows.length === 0 ? <Muted>None from your confirmations yet.</Muted> : null}
               {rows.map((booking) => (
-                <Pressable
+                <PressableScale
                   key={booking.id}
                   onPress={() => router.push({ pathname: '/bookings/[id]', params: { id: booking.id } })}
                   style={styles.item}>
@@ -367,17 +435,17 @@ export default function SpaceDetailScreen() {
                       </Muted>
                     ) : null}
                   </View>
-                </Pressable>
+                </PressableScale>
               ))}
             </View>
               );
             })}
-        </>
+        </FadePanel>
       ) : null}
 
-      {tab === 'Places' && token && id ? <SpacePlaces spaceId={id} token={token} /> : null}
+      {loaded && tab === 'Places' && token && id ? <SpacePlaces spaceId={id} token={token} start={space?.start_date} end={space?.end_date} /> : null}
 
-      {tab === 'Calendar' && space?.start_date && space.end_date ? (
+      {loaded && tab === 'Calendar' && space?.start_date && space.end_date ? (
         <SpaceCalendar
           start={space.start_date}
           end={space.end_date}
@@ -389,41 +457,18 @@ export default function SpaceDetailScreen() {
           }}
         />
       ) : null}
-      {tab === 'Calendar' && !(space?.start_date && space.end_date) ? (
+      {token && id ? (
+        <StaySearchSheet
+          spaceId={id}
+          token={token}
+          gap={searchGap}
+          defaultCity={space?.destination_name ?? ''}
+          onClose={() => setSearchGap(null)}
+        />
+      ) : null}
+      {loaded && tab === 'Calendar' && !(space?.start_date && space.end_date) ? (
         <Muted>Add start and end dates to this space to see a calendar.</Muted>
       ) : null}
-
-      {tab === 'Photos' ? (
-        <View style={styles.note}>
-          <Text style={styles.itemTitle}>Photos</Text>
-          <Muted>
-            Photographs for this Travel Space will be organized here by place and day. The photo library is not connected, so nothing is imported.
-          </Muted>
-        </View>
-      ) : null}
-
-      {tab === 'Budget' ? (
-        <View style={styles.note}>
-          <Text style={styles.itemTitle}>Budget is not tracked yet</Text>
-          <Muted>Spent and remaining amounts will show here from your expenses. This version will not display a sample total.</Muted>
-        </View>
-      ) : null}
-
-      {tab === 'Docs' ? (
-        <View style={styles.note}>
-          <Text style={styles.itemTitle}>Travel wallet is not in this version</Text>
-          <Muted>Passports, visas, and tickets will live here. Nothing is stored as a document yet.</Muted>
-        </View>
-      ) : null}
-
-      <View style={styles.manage}>
-        <Text style={styles.section}>Manage space</Text>
-        <Button label="Edit name, dates and destination" tone="quiet" onPress={() => router.push({ pathname: '/new-space', params: { id } })} />
-        <Button label="Add travel between places" tone="quiet" onPress={() => addJourney()} />
-        <Button label="Add a booking manually" tone="quiet" onPress={() => router.push({ pathname: '/new-booking', params: { space: id } })} />
-        <Button label="Merge another space into this one" tone="quiet" onPress={() => router.push({ pathname: '/merge-space', params: { id } })} />
-        {archived ? null : <Button label="Archive space" tone="quiet" onPress={archive} />}
-      </View>
     </Screen>
   );
 }
@@ -437,48 +482,52 @@ function NightRow({ night, onOpen, onRemove }: { night: CoverageNight; onOpen: (
         ? `Staying: ${night.title}`
         : `Staying at ${night.title}`;
   return (
-    <Pressable onPress={night.status === 'own_stay' ? undefined : onOpen} style={styles.night}>
+    <PressableScale onPress={night.status === 'own_stay' ? undefined : onOpen} style={styles.night}>
       <Text style={styles.nightIcon}>{night.status === 'transit' ? '✈︎' : '☾'}</Text>
       <View style={{ flex: 1 }}>
         <Text style={styles.nightTitle}>{label}</Text>
         <Muted>{night.status === 'own_stay' ? `Added by you${progress}` : `Tonight${progress}`}</Muted>
       </View>
       {night.status === 'own_stay' ? (
-        <Pressable onPress={onRemove} hitSlop={8}>
+        <PressableScale onPress={onRemove}>
           <Text style={styles.remove}>Remove</Text>
-        </Pressable>
+        </PressableScale>
       ) : null}
-    </Pressable>
+    </PressableScale>
   );
 }
 
 const styles = StyleSheet.create({
-  hero: { backgroundColor: theme.mossDeep, borderRadius: 24, padding: 18, gap: 6, marginHorizontal: -4 },
-  back: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
-  backLabel: { color: '#fff', fontSize: 24, lineHeight: 26 },
-  heroTitle: { color: '#fff', fontSize: 28, fontWeight: '700' },
-  heroMeta: { color: '#d7ebe3', textTransform: 'capitalize' },
-  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  tab: { backgroundColor: '#fff', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
-  tabOn: { backgroundColor: theme.moss },
-  tabLabel: { color: theme.ink, fontWeight: '600' },
-  tabLabelOn: { color: '#fff' },
   days: { flexDirection: 'row', gap: 8 },
   day: { backgroundColor: '#fff', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
   dayOn: { backgroundColor: theme.ink },
   dayLabel: { color: theme.ink, fontWeight: '600' },
   dayLabelOn: { color: '#fff' },
+  dayCard: { backgroundColor: '#fff', borderRadius: 22, padding: 14, gap: 10, borderWidth: 1, borderColor: theme.line },
+  dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  dayName: { color: theme.ink, fontSize: 18, fontWeight: '700' },
+  dayDate: { color: theme.muted, fontWeight: '600' },
+  slot: { flexDirection: 'row', gap: 10, alignItems: 'stretch' },
+  slotTime: { width: 48, color: theme.moss, fontWeight: '700', paddingTop: 12 },
+  rail: { width: 12, alignItems: 'center' },
+  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: theme.moss, marginTop: 16 },
+  slotBody: { flex: 1, backgroundColor: theme.paper, borderRadius: 16, padding: 12, gap: 2 },
+  prompt: { backgroundColor: theme.coralSoft, borderRadius: 16, padding: 12, gap: 8 },
+  promptActions: { gap: 8 },
   item: { backgroundColor: '#fff', borderRadius: 18, padding: 14, flexDirection: 'row', gap: 8, alignItems: 'center' },
   itemTitle: { color: theme.ink, fontSize: 16, fontWeight: '700' },
   clock: { color: theme.moss, fontWeight: '700' },
-  actions: { gap: 10 },
+  segment: { flexDirection: 'row', backgroundColor: '#e6ece8', borderRadius: 14, padding: 4 },
+  segmentItem: { flex: 1, paddingVertical: 9, borderRadius: 11, alignItems: 'center' },
+  segmentOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  segmentLabel: { color: theme.muted, fontWeight: '600', fontSize: 14 },
+  segmentLabelOn: { color: theme.ink },
   note: { backgroundColor: '#fff', borderRadius: 18, padding: 16, gap: 6 },
   group: { gap: 8 },
   move: { backgroundColor: '#fff', borderRadius: 16, padding: 12, gap: 4, borderWidth: 1, borderColor: theme.line, borderStyle: 'dashed' },
   moveAction: { alignSelf: 'flex-start', marginTop: 4, backgroundColor: theme.mossSoft, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
   moveActionLabel: { color: theme.moss, fontWeight: '700' },
   manage: { gap: 8, marginTop: 12 },
-  archivedNote: { backgroundColor: theme.coralSoft, borderRadius: 18, padding: 16, gap: 8 },
   summary: { backgroundColor: theme.mossSoft, borderRadius: 18, padding: 14, gap: 4 },
   summaryWarn: { backgroundColor: theme.coralSoft },
   night: { backgroundColor: theme.mossSoft, borderRadius: 16, padding: 12, flexDirection: 'row', gap: 10, alignItems: 'center' },
