@@ -1,5 +1,5 @@
-import hmac
 import hashlib
+import hmac
 import html
 import json
 from datetime import UTC, datetime
@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from pypdf import PdfReader
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, Today
 from app.api.ownership import owned
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -20,33 +20,40 @@ from app.core.security import create_access_token, decode_access_token, read_ret
 from app.models.entities import (
     Booking,
     BookingSourceKind,
-    Integration,
+    IntegrationStatus,
     Journey,
-    Stay,
-    IntegrationProvider,
     Notification,
+    Stay,
     TravelSpace,
     TravelSpaceStatus,
     User,
 )
+from app.models.living import VisaLog, VisaSpan
+from app.models.wallet import TravelDocument
 from app.schemas import (
     ConnectIn,
     ConnectOut,
     EmailIn,
+    GmailAccountOut,
     InboundMailIn,
     IngestOut,
     IntegrationOut,
     NotificationOut,
     ReminderOut,
 )
-from app.services.gmail import authorization_url, connect_from_code, disconnect, sync_gmail, trip_search_query
-from app.services.ingest import InboundMessage, ingest_message, record_for_review
-from app.models.living import VisaLog, VisaSpan
-from app.services.reminders import upcoming_reminders
-from app.models.wallet import TravelDocument
 from app.services.documents import document_reminders
-from app.services.visa_days import count_stay, stay_reminders
+from app.services.gmail import (
+    authorization_url,
+    connect_from_code,
+    disconnect,
+    gmail_accounts,
+    sync_gmail,
+    trip_search_query,
+)
+from app.services.ingest import InboundMessage, ingest_message, record_for_review
+from app.services.reminders import upcoming_reminders
 from app.services.stay_coverage import compute_coverage
+from app.services.visa_days import count_stay, stay_reminders
 
 router = APIRouter()
 
@@ -171,19 +178,25 @@ async def import_document(
 
 @router.get("/integrations/gmail", response_model=IntegrationOut)
 def gmail_status(user: CurrentUser, session: DbSession) -> IntegrationOut:
-    integration = session.scalar(
-        select(Integration).where(
-            Integration.user_id == user.id,
-            Integration.provider == IntegrationProvider.gmail,
-        )
-    )
-    if integration is None:
-        return IntegrationOut(provider="gmail", status="disconnected", scopes=[], last_synced_at=None)
+    """Every Gmail inbox this person has linked; `status` is connected when any of them is."""
+    accounts = gmail_accounts(session, user.id)
+    connected = [row for row in accounts if row.status == IntegrationStatus.connected]
+    synced = [row.last_synced_at for row in accounts if row.last_synced_at is not None]
+    status = "connected" if connected else ("error" if accounts else "disconnected")
     return IntegrationOut(
         provider="gmail",
-        status=integration.status.value,
-        scopes=list(integration.scopes or []),
-        last_synced_at=integration.last_synced_at,
+        status=status,
+        scopes=sorted({scope for row in connected for scope in (row.scopes or [])}),
+        last_synced_at=max(synced) if synced else None,
+        accounts=[
+            GmailAccountOut(
+                id=row.id,
+                email=row.external_account,
+                status=row.status.value,
+                last_synced_at=row.last_synced_at,
+            )
+            for row in accounts
+        ],
     )
 
 
@@ -221,7 +234,14 @@ def gmail_callback(
 
 @router.delete("/integrations/gmail", status_code=204)
 def gmail_disconnect(user: CurrentUser, session: DbSession) -> None:
+    """Disconnect every linked Gmail account."""
     disconnect(session, user)
+
+
+@router.delete("/integrations/gmail/{account_id}", status_code=204)
+def gmail_disconnect_account(account_id: UUID, user: CurrentUser, session: DbSession) -> None:
+    """Disconnect one Gmail account; bookings already read from it stay."""
+    disconnect(session, user, account_id)
 
 
 @router.post("/integrations/gmail/sync", response_model=list[IngestOut])
@@ -229,6 +249,7 @@ def gmail_sync(
     user: CurrentUser,
     session: DbSession,
     travel_space_id: UUID | None = None,
+    account_id: UUID | None = None,
 ) -> list[IngestOut]:
     query = None
     date_window = None
@@ -238,7 +259,8 @@ def gmail_sync(
             raise AppError(409, "Set the start and end dates on this Travel Space before syncing.")
         query = trip_search_query(space.start_date, space.end_date)
         date_window = (space.start_date, space.end_date)
-    return [_out(result) for result in sync_gmail(session, user, travel_space_id, query, date_window)]
+    results = sync_gmail(session, user, travel_space_id, query, date_window, account_id)
+    return [_out(result) for result in results]
 
 
 def _app_return_url(value: str | None) -> str | None:
@@ -276,7 +298,7 @@ def _gmail_page(title: str, body: str, return_to: str | None = None) -> HTMLResp
 
 
 @router.get("/reminders", response_model=list[ReminderOut])
-def list_reminders(user: CurrentUser, session: DbSession) -> list[dict]:
+def list_reminders(user: CurrentUser, session: DbSession, today: Today) -> list[dict]:
     bookings = list(session.scalars(select(Booking).where(Booking.user_id == user.id)).all())
     spaces = list(
         session.scalars(
@@ -287,7 +309,6 @@ def list_reminders(user: CurrentUser, session: DbSession) -> list[dict]:
         ).all()
     )
     gaps = []
-    today = datetime.now(UTC).date()
     for space in spaces:
         if space.start_date is None or space.end_date is None:
             continue

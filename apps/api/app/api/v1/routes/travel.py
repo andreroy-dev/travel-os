@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, Today
 from app.api.ownership import owned
 from app.core.errors import AppError
 from app.models.entities import (
@@ -20,30 +20,30 @@ from app.models.entities import (
     TravelSpace,
     TravelSpaceStatus,
 )
+from app.models.wallet import TravelDocument
 from app.schemas import (
+    CoordinatesIn,
     DestinationIn,
     DestinationOut,
     JourneyIn,
     JourneyOut,
+    MergeIn,
+    PromptDismissIn,
     SavedPlaceIn,
-    CoordinatesIn,
     SavedPlaceOut,
     SavedPlaceStatusIn,
-    PromptDismissIn,
-    StayIn,
     StayCoverageOut,
+    StayIn,
     StayOut,
-    MergeIn,
     TravelSpaceIn,
-    TravelSpacePatch,
     TravelSpaceOut,
+    TravelSpacePatch,
 )
 from app.services.catalog import find_or_create_destination
-from app.services.itinerary_sync import sync_journey_itinerary, sync_stay_itinerary
-from app.services.space_merge import merge_spaces
-from app.models.wallet import TravelDocument
 from app.services.dashboard_situation import booked_costs, build_situation
+from app.services.itinerary_sync import sync_journey_itinerary, sync_stay_itinerary
 from app.services.provider_links import DISCLOSURE, stay_search_links
+from app.services.space_merge import merge_spaces
 from app.services.space_status import status_from_dates
 from app.services.stay_coverage import compute_coverage
 from app.services.validation import ensure_date_order
@@ -170,10 +170,10 @@ def archive_space(space_id: UUID, user: CurrentUser, session: DbSession) -> None
 
 
 @router.post("/travel-spaces/{space_id}/restore", response_model=TravelSpaceOut)
-def restore_space(space_id: UUID, user: CurrentUser, session: DbSession) -> TravelSpaceOut:
+def restore_space(space_id: UUID, user: CurrentUser, session: DbSession, today: Today) -> TravelSpaceOut:
     space = owned(session, TravelSpace, space_id, user.id)
     if space.status == TravelSpaceStatus.archived:
-        space.status = status_from_dates(space.start_date, space.end_date, date.today())
+        space.status = status_from_dates(space.start_date, space.end_date, today)
         session.commit()
         session.refresh(space)
     return _space_out(space)
@@ -212,10 +212,9 @@ def space_coverage(space_id: UUID, user: CurrentUser, session: DbSession) -> Sta
 
 
 @router.get("/travel-spaces/{space_id}/summary")
-def space_summary(space_id: UUID, user: CurrentUser, session: DbSession) -> dict:
+def space_summary(space_id: UUID, user: CurrentUser, session: DbSession, today: Today) -> dict:
     """Live counts for the trip hub: nights, bookings, spend, packing, documents, photos, places."""
     space = owned(session, TravelSpace, space_id, user.id)
-    today = date.today()
     summary = build_situation(session, user.id, space, [space], today)
     summary.pop("upcoming", None)
     summary.pop("trips_completed", None)

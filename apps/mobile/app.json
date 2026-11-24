@@ -71,7 +71,8 @@
           "cameraPermission": "Travel OS uses the camera to scan your passport, visas, tickets and receipts into your travel wallet.",
           "photosPermission": "Travel OS adds the photos you choose, such as document scans, to your wallet."
         }
-      ]
+      ],
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true

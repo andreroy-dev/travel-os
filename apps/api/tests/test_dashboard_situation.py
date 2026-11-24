@@ -125,3 +125,33 @@ def test_trip_summary_counts_booking_prices_and_drops_cancelled_ones():
         summary = client.get(f"/api/v1/travel-spaces/{space['id']}/summary", headers=h).json()
         assert summary["booked_costs"][0] == {"currency": "EUR", "amount": "200.00", "count": 1}
         assert summary["nights"]["covered"] == 2
+
+
+def test_today_follows_the_phone_time_zone():
+    from datetime import UTC, datetime, timedelta
+
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as client:
+        token = client.post(
+            "/api/v1/auth/dev-login", json={"email": "zone@travelos.test", "display_name": "Z"}
+        ).json()["access_token"]
+        h = {"Authorization": f"Bearer {token}"}
+        today = datetime.now(UTC).date()
+        space = client.post(
+            "/api/v1/travel-spaces",
+            json={
+                "title": "Zones",
+                "start_date": (today - timedelta(days=3)).isoformat(),
+                "end_date": (today + timedelta(days=5)).isoformat(),
+            },
+            headers=h,
+        ).json()
+        url = f"/api/v1/travel-spaces/{space['id']}/summary"
+        ahead = client.get(url, headers={**h, "X-Timezone": "Pacific/Kiritimati"}).json()
+        behind = client.get(url, headers={**h, "X-Timezone": "Pacific/Pago_Pago"}).json()
+        ignored = client.get(url, headers={**h, "X-Timezone": "Not/AZone"}).json()
+        assert ahead["day_number"] > behind["day_number"]
+        assert ignored["day_number"] is not None

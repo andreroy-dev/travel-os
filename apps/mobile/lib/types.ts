@@ -146,11 +146,20 @@ export type NotificationItem = {
   created_at: string;
 };
 
+export type GmailAccount = {
+  id: string;
+  email: string | null;
+  /** connected, or error when Google stopped allowing access and it needs reconnecting. */
+  status: string;
+  last_synced_at: string | null;
+};
+
 export type Integration = {
   provider: string;
   status: string;
   scopes: string[];
   last_synced_at: string | null;
+  accounts: GmailAccount[];
 };
 
 export type IngestResult = {

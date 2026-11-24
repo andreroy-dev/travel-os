@@ -7,6 +7,7 @@ import { Button, Card, ErrorNote, Muted, Screen, theme } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { confirmAction } from '@/lib/confirm';
 import { currencyByCode } from '@/lib/currencies';
+import { accountName, connectGmail } from '@/lib/gmail';
 import { useSession } from '@/lib/session';
 import type { Integration } from '@/lib/types';
 
@@ -26,7 +27,8 @@ type Preferences = {
 export default function ProfileScreen() {
   const { token, user, signOut } = useSession();
   const router = useRouter();
-  const [gmail, setGmail] = useState<string>('disconnected');
+  const [gmail, setGmail] = useState<Integration | null>(null);
+  const [connecting, setConnecting] = useState(false);
   const [forwarding, setForwarding] = useState<string | null>(null);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [currency, setCurrency] = useState('USD');
@@ -86,7 +88,7 @@ export default function ProfileScreen() {
         api<{ address: string | null; available: boolean }>('/users/me/forwarding', { token }),
         api<Preferences>('/preferences', { token }),
       ]);
-      setGmail(integration.status);
+      setGmail(integration);
       setForwarding(address.address);
       setPrefs(preferences);
       setCurrency(preferences.home_currency);
@@ -188,12 +190,38 @@ export default function ProfileScreen() {
           }
         }}
       />
-      <Pressable onPress={() => router.push('/gmail')}>
-        <Card>
-          <Text style={styles.plan}>Gmail · {gmail}</Text>
-          <Muted>Connect Gmail here. Sync bookings from inside a Travel Space.</Muted>
-        </Card>
-      </Pressable>
+      <Card>
+        <Pressable onPress={() => router.push('/gmail')} style={{ gap: 6 }}>
+          <Text style={styles.plan}>Gmail</Text>
+          {gmail && gmail.accounts.length === 0 ? <Muted>Not connected. Connect the inbox your booking emails go to.</Muted> : null}
+          {(gmail?.accounts ?? []).map((account) => (
+            <View key={account.id} style={styles.mailRow}>
+              <View style={[styles.mailDot, account.status !== 'connected' && styles.mailDotOff]} />
+              <Text style={styles.mailText} numberOfLines={1}>
+                {accountName(account.email)}
+              </Text>
+              {account.status !== 'connected' ? <Text style={styles.mailOff}>Reconnect</Text> : null}
+            </View>
+          ))}
+        </Pressable>
+        <Button
+          label={gmail?.accounts.length ? 'Add another Gmail account' : 'Connect Gmail'}
+          tone="quiet"
+          busy={connecting}
+          onPress={async () => {
+            if (!token) return;
+            setConnecting(true);
+            setError(null);
+            try {
+              setGmail((await connectGmail(token)).gmail);
+            } catch (err) {
+              setError(err instanceof ApiError ? err.message : 'Gmail could not be connected.');
+            } finally {
+              setConnecting(false);
+            }
+          }}
+        />
+      </Card>
       <ErrorNote message={error} />
       <Text style={styles.section}>Your data</Text>
       <Button label="Export my data" tone="quiet" onPress={exportData} busy={busy === 'export'} />
@@ -208,6 +236,11 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   name: { fontSize: 28, fontWeight: '700', color: theme.ink },
   plan: { color: theme.moss, fontWeight: '700', fontSize: 16 },
+  mailRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  mailDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.moss },
+  mailDotOff: { backgroundColor: theme.danger },
+  mailText: { flex: 1, color: theme.ink, fontWeight: '600', fontSize: 15 },
+  mailOff: { color: theme.danger, fontWeight: '700', fontSize: 13 },
   section: { fontSize: 18, fontWeight: '700', color: theme.ink },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   util: { flex: 1, minWidth: 96, backgroundColor: '#fff', borderRadius: 16, padding: 12, gap: 4, borderWidth: 1, borderColor: theme.line },

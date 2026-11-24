@@ -352,11 +352,19 @@ class IngestOut(BaseModel):
     detail: str
 
 
+class GmailAccountOut(BaseModel):
+    id: UUID
+    email: str | None
+    status: str
+    last_synced_at: datetime | None
+
+
 class IntegrationOut(BaseModel):
     provider: str
     status: str
     scopes: list[str]
     last_synced_at: datetime | None
+    accounts: list[GmailAccountOut] = []
 
 
 class ConnectIn(BaseModel):

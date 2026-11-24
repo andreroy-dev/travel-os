@@ -1,10 +1,9 @@
-from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, Today
 from app.models.entities import ItineraryItem, TravelSpace
 from app.schemas import DashboardOut, FocusOut, ItineraryOut, TravelSpaceOut
 from app.services.dashboard import determine_dashboard
@@ -14,8 +13,7 @@ router = APIRouter()
 
 
 @router.get("/dashboard", response_model=DashboardOut)
-def dashboard(user: CurrentUser, session: DbSession) -> DashboardOut:
-    today = datetime.now(UTC).date()
+def dashboard(user: CurrentUser, session: DbSession, today: Today) -> DashboardOut:
     spaces = list(
         session.scalars(
             select(TravelSpace)

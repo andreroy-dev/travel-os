@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Appear, PressableScale } from '@/components/motion';
@@ -223,7 +224,7 @@ export default function MemoriesScreen() {
               {items.map((photo) => (
                 <Pressable key={photo.id} onPress={() => setOpen(photo)} style={styles.cell}>
                   {uris[photo.asset_key] ? (
-                    <Image source={{ uri: uris[photo.asset_key] }} style={styles.thumb} />
+                    <Image source={{ uri: uris[photo.asset_key] }} style={styles.thumb} contentFit="cover" recyclingKey={photo.id} transition={150} />
                   ) : (
                     <View style={[styles.thumb, styles.missing]}>
                       <Text style={styles.missingText}>On another phone</Text>
@@ -273,7 +274,7 @@ export default function MemoriesScreen() {
             ) : null}
           </View>
           {open && uris[open.asset_key] ? (
-            <Image source={{ uri: uris[open.asset_key] }} style={styles.full} resizeMode="contain" />
+            <Image source={{ uri: uris[open.asset_key] }} style={styles.full} contentFit="contain" transition={150} />
           ) : (
             <View style={styles.full} />
           )}

@@ -363,7 +363,10 @@ class EmailRecord(Base):
 class Integration(Base):
     __tablename__ = "integrations"
     __table_args__ = (
-        UniqueConstraint("user_id", "provider", name="uq_integrations_user_provider"),
+        # One row per connected account, so a person can link several Gmail inboxes.
+        UniqueConstraint(
+            "user_id", "provider", "external_account", name="uq_integrations_user_provider_account"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)

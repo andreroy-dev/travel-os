@@ -72,7 +72,7 @@ function RootNavigator() {
         <Stack.Screen name="spaces/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="new-booking" options={{ title: 'Add booking', presentation: 'modal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="import-confirmation" options={{ title: 'Import', presentation: 'modal', animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="gmail" options={{ title: 'Gmail' }} />
+        <Stack.Screen name="gmail" options={{ title: '', headerBackTitle: 'Back' }} />
         <Stack.Screen name="bookings/[id]" options={{ title: 'Booking' }} />
         <Stack.Screen name="merge-space" options={{ title: 'Merge spaces' }} />
         <Stack.Screen name="add-journey" options={{ title: 'Add travel', presentation: 'modal' }} />

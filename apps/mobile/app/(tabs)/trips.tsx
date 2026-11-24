@@ -8,6 +8,7 @@ import { ApiError, api } from '@/lib/api';
 import { loadCached } from '@/lib/cache';
 import { confirmAction } from '@/lib/confirm';
 import { prettyDate, prettyDay } from '@/lib/dates';
+import { loadGmail } from '@/lib/gmail';
 import { useSession } from '@/lib/session';
 import type { Booking, TravelSpace } from '@/lib/types';
 
@@ -28,6 +29,7 @@ export default function TripsScreen() {
   const { token } = useSession();
   const router = useRouter();
   const [spaces, setSpaces] = useState<TravelSpace[]>([]);
+  const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
   const [archived, setArchived] = useState<TravelSpace[]>([]);
   const [filter, setFilter] = useState<(typeof filters)[number]>('all');
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +40,10 @@ export default function TripsScreen() {
   const load = useCallback(async () => {
     if (!token) return;
     setRefreshing(true);
+    // Only offer to connect Gmail until at least one inbox is connected.
+    loadGmail(token)
+      .then((gmail) => setGmailConnected(gmail.status === 'connected'))
+      .catch(() => undefined);
     try {
       const [live, old] = await loadCached(`trips:${token}`, () =>
         Promise.all([
@@ -122,7 +128,7 @@ export default function TripsScreen() {
           </PressableScale>
         ))}
       </View>
-      <Button label="Connect Gmail" tone="quiet" onPress={() => router.push('/gmail')} />
+      {gmailConnected === false ? <Button label="Connect Gmail" tone="quiet" onPress={() => router.push('/gmail')} /> : null}
       {error ? <Muted>{error}</Muted> : null}
       {!loaded ? <SkeletonList /> : null}
       {loaded

@@ -1,7 +1,9 @@
 from collections.abc import Generator
+from datetime import UTC, date, datetime
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends
+from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -59,3 +61,27 @@ def get_current_user(
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 DbSession = Annotated[Session, Depends(get_session)]
+
+
+def get_today(
+    user: CurrentUser,
+    session: DbSession,
+    x_timezone: Annotated[str | None, Header()] = None,
+) -> date:
+    """Today's date where the person is: the phone's time zone, then their saved one, then UTC."""
+    for name in (x_timezone, _saved_timezone(session, user)):
+        if not name or len(name) > 64:
+            continue
+        try:
+            return datetime.now(ZoneInfo(name)).date()
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+    return datetime.now(UTC).date()
+
+
+def _saved_timezone(session: Session, user: User) -> str | None:
+    preference = session.get(UserPreference, user.id)
+    return preference.timezone if preference else None
+
+
+Today = Annotated[date, Depends(get_today)]

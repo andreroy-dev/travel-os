@@ -39,8 +39,18 @@ type Options = {
   body?: unknown;
 };
 
+/** The phone's time zone, so "today" on the server is the traveller's today, not UTC's. */
+const deviceTimeZone = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+})();
+
 export async function api<T>(path: string, options: Options = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
+  if (deviceTimeZone) headers['X-Timezone'] = deviceTimeZone;
   if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json';
   }
