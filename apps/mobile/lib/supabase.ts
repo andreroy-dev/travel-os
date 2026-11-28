@@ -25,7 +25,10 @@ export const supabase: SupabaseClient | null =
     : null;
 
 // Refresh tokens only while the app is in the foreground (Supabase's React Native guidance).
+// Outside a browser supabase-js never starts refreshing by itself, and no 'change' event fires
+// for the launch, so start it now: otherwise the token dies an hour after sign-in.
 if (supabase && Platform.OS !== 'web') {
+  if (AppState.currentState === 'active') supabase.auth.startAutoRefresh();
   AppState.addEventListener('change', (state) => {
     if (state === 'active') supabase.auth.startAutoRefresh();
     else supabase.auth.stopAutoRefresh();

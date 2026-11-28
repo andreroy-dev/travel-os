@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -50,10 +51,18 @@ def get_current_user(
                 display_name=identity.display_name or identity.email.split("@")[0],
                 supabase_user_id=identity.supabase_user_id,
             )
-            session.add(user)
-            session.flush()
-            session.add(UserPreference(user_id=user.id))
-            session.commit()
+            try:
+                session.add(user)
+                session.flush()
+                session.add(UserPreference(user_id=user.id))
+                session.commit()
+            except IntegrityError:
+                # The app fires several requests at once after sign-in; another one created
+                # this user first. Use theirs.
+                session.rollback()
+                user = session.scalar(
+                    select(User).where(User.supabase_user_id == identity.supabase_user_id)
+                )
     if user is None:
         raise AppError(401, "Sign in again.")
     return user

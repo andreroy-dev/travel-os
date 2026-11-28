@@ -78,3 +78,48 @@ def test_first_supabase_sign_in_links_existing_account_by_email(monkeypatch):
             algorithm="HS256",
         )
         assert client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {wrong_aud}"}).status_code == 401
+
+
+def test_two_first_requests_at_once_share_one_new_user(monkeypatch):
+    """After sign-in the app fires several requests together; both may try to create the user."""
+    from app.api.deps import get_current_user
+    from app.core import security
+    from app.core.database import get_db
+
+    identity = security.TokenIdentity(
+        user_id=None,
+        supabase_user_id="supabase-race-1",
+        email="race@travelos.test",
+        display_name="Race",
+        email_verified=True,
+    )
+    monkeypatch.setattr("app.api.deps.decode_access_token", lambda _token: identity)
+
+    with _client():
+        first = next(get_db())
+        winner = get_current_user(type("C", (), {"credentials": "t"})(), first)
+
+        # The second request read the database before the first one saved: every lookup missed.
+        second = next(get_db())
+        real_scalar = second.scalar
+        missed = {"left": 3}
+
+        def stale_scalar(statement, *args, **kwargs):
+            if missed["left"] > 0:
+                missed["left"] -= 1
+                return None
+            return real_scalar(statement, *args, **kwargs)
+
+        monkeypatch.setattr(second, "scalar", stale_scalar)
+        loser = get_current_user(type("C", (), {"credentials": "t"})(), second)
+
+        assert loser.id == winner.id
+        assert second.scalar(select_users_named("race@travelos.test")) == 1
+
+
+def select_users_named(email: str):
+    from sqlalchemy import func, select
+
+    from app.models.entities import User
+
+    return select(func.count()).select_from(User).where(User.email == email)
