@@ -7,7 +7,7 @@ services:
     runtime: docker
     rootDir: apps/api
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: starter  # use "free" for the very first test, it sleeps after 15 min idle
     healthCheckPath: /api/v1/health
     autoDeploy: true
     envVars:
@@ -21,6 +21,10 @@ services:
         sync: false
       - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: STORAGE_BUCKET
+        value: documents
       - key: CORS_ORIGINS
         value: "*"
       - key: GOOGLE_CLIENT_ID

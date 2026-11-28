@@ -16,6 +16,15 @@ export type Preferences = {
   accommodation_preferences: string[];
   accessibility_notes: string | null;
   notifications_enabled: boolean;
+  home_country?: string | null;
+  residency_country?: string | null;
+  passport_nationality?: string | null;
+  trip_type?: 'holiday' | 'long_term' | 'living_abroad' | 'mixed' | null;
+  pace?: 'relaxed' | 'balanced' | 'packed' | null;
+  climate?: 'warm' | 'mild' | 'cold' | 'any' | null;
+  available_time?: string | null;
+  provider_priority?: 'home' | 'destination' | null;
+  onboarding_complete?: boolean;
 };
 
 export type TravelSpace = {

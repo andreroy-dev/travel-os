@@ -54,7 +54,7 @@ def list_packing(user: CurrentUser, session: DbSession, travel_space_id: UUID) -
     return list(
         session.scalars(
             select(PackingItem).where(
-                PackingItem.user_id == user.id, PackingItem.travel_space_id == travel_space_id
+                PackingItem.travel_space_id == travel_space_id
             )
         ).all()
     )
@@ -96,7 +96,7 @@ def delete_packing(item_id: UUID, user: CurrentUser, session: DbSession) -> None
 def get_budget(user: CurrentUser, session: DbSession, travel_space_id: UUID) -> dict:
     _space(session, travel_space_id, user.id)
     row = session.scalar(
-        select(TripBudget).where(TripBudget.user_id == user.id, TripBudget.travel_space_id == travel_space_id)
+        select(TripBudget).where(TripBudget.travel_space_id == travel_space_id)
     )
     if row is None:
         return {"amount": None, "currency": None}
@@ -146,10 +146,10 @@ def settlement(user: CurrentUser, session: DbSession, travel_space_id: UUID) -> 
     _space(session, travel_space_id, user.id)
     expenses = list(
         session.scalars(
-            select(Expense).where(Expense.user_id == user.id, Expense.travel_space_id == travel_space_id)
+            select(Expense).where(Expense.travel_space_id == travel_space_id)
         ).all()
     )
-    splits = list(session.scalars(select(ExpenseSplit).where(ExpenseSplit.user_id == user.id)).all())
+    splits = list(session.scalars(select(ExpenseSplit).where(ExpenseSplit.expense_id.in_([e.id for e in expenses]))).all())
     grouped: dict = {}
     for split in splits:
         grouped.setdefault(split.expense_id, []).append((split.name, Decimal(split.amount)))

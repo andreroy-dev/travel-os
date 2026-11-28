@@ -22,14 +22,14 @@ def list_memories(user: CurrentUser, session: DbSession, travel_space_id: UUID) 
     photos = list(
         session.scalars(
             select(MemoryPhoto)
-            .where(MemoryPhoto.user_id == user.id, MemoryPhoto.travel_space_id == travel_space_id)
+            .where(MemoryPhoto.travel_space_id == travel_space_id)
             .order_by(MemoryPhoto.taken_on, MemoryPhoto.created_at)
         ).all()
     )
     notes = list(
         session.scalars(
             select(JournalNote)
-            .where(JournalNote.user_id == user.id, JournalNote.travel_space_id == travel_space_id)
+            .where(JournalNote.travel_space_id == travel_space_id)
             .order_by(JournalNote.on_date)
         ).all()
     )

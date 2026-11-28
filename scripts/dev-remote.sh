@@ -6,7 +6,9 @@
 #   The app is started with EXPO_PUBLIC_API_URL = the Cloudflare URL.
 #
 # The Mac must stay on and online; the script keeps it awake while running.
-# The public API URL changes every time this script starts. Ctrl-C stops everything.
+# The public API URL changes every time this script starts (the API itself reloads code
+# changes without a restart). Gmail sign-in needs that URL registered with Google; the
+# script prints it. Ctrl-C stops everything.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,15 +44,7 @@ trap cleanup EXIT INT TERM
 caffeinate -ims -w $$ &
 pids+=($!)
 
-echo "Starting API..."
-(cd "$API_DIR" && exec uv run uvicorn app.main:app --host 127.0.0.1 --port 8002) >"$LOG_DIR/api.log" 2>&1 &
-pids+=($!)
-for _ in $(seq 1 30); do
-  curl -fs http://127.0.0.1:8002/api/v1/health >/dev/null 2>&1 && break
-  sleep 1
-done
-curl -fs http://127.0.0.1:8002/api/v1/health >/dev/null || { echo "API did not start; see $LOG_DIR/api.log" >&2; exit 1; }
-
+# Open the tunnel first: Gmail sign-in must return to this run's public address.
 echo "Opening public tunnel for the API..."
 : >"$LOG_DIR/cloudflared.log"
 cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8002 >"$LOG_DIR/cloudflared.log" 2>&1 &
@@ -62,12 +56,32 @@ for _ in $(seq 1 45); do
   sleep 1
 done
 [[ -n "$API_URL" ]] || { echo "No tunnel URL; see $LOG_DIR/cloudflared.log" >&2; exit 1; }
+GMAIL_CALLBACK="$API_URL/api/v1/integrations/gmail/callback"
+
+# --reload restarts the API when its code changes, so the tunnel address (and the
+# Gmail return address registered with Google) survives code edits.
+echo "Starting API..."
+(cd "$API_DIR" && GOOGLE_REDIRECT_URI="$GMAIL_CALLBACK" exec uv run uvicorn app.main:app \
+  --host 127.0.0.1 --port 8002 --reload --reload-dir app) >"$LOG_DIR/api.log" 2>&1 &
+pids+=($!)
+for _ in $(seq 1 30); do
+  curl -fs http://127.0.0.1:8002/api/v1/health >/dev/null 2>&1 && break
+  sleep 1
+done
+curl -fs http://127.0.0.1:8002/api/v1/health >/dev/null || { echo "API did not start; see $LOG_DIR/api.log" >&2; exit 1; }
 for _ in $(seq 1 30); do
   curl -fs "$API_URL/api/v1/health" >/dev/null 2>&1 && break
   sleep 2
 done
 echo "API is public at $API_URL"
 echo "$API_URL" >"$LOG_DIR/public-api-url.txt"
+echo "$GMAIL_CALLBACK" >"$LOG_DIR/gmail-redirect-uri.txt"
+echo
+echo "Gmail sign-in returns to:"
+echo "  $GMAIL_CALLBACK"
+echo "Add it once in Google Cloud Console > Google Auth Platform > Clients > (web client)"
+echo "> Authorized redirect URIs, then Save. It changes only when this script restarts."
+echo
 
 echo "Starting Expo with a tunnel (scan the QR code with the iPhone camera)..."
 cd "$APP_DIR"

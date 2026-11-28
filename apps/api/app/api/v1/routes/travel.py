@@ -7,8 +7,10 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import CurrentUser, DbSession, Today
 from app.api.ownership import owned
+from app.api.permissions import Role, member_space_ids
 from app.core.errors import AppError
 from app.models.entities import (
+    TripMember,
     Booking,
     Destination,
     DestinationKind,
@@ -85,7 +87,7 @@ def list_spaces(
     )
     spaces = session.scalars(
         select(TravelSpace)
-        .where(TravelSpace.user_id == user.id, status_filter)
+        .where(TravelSpace.id.in_(member_space_ids(session, user.id)), status_filter)
         .options(selectinload(TravelSpace.destination))
         .order_by(TravelSpace.start_date, TravelSpace.created_at)
     ).all()
@@ -107,6 +109,8 @@ def create_space(payload: TravelSpaceIn, user: CurrentUser, session: DbSession) 
         summary=payload.summary,
     )
     session.add(space)
+    session.flush()
+    session.add(TripMember(travel_space_id=space.id, user_id=user.id, role=Role.owner))
     session.commit()
     session.refresh(space)
     return _space_out(space)
@@ -150,8 +154,8 @@ def merge_space(
     space_id: UUID, payload: MergeIn, user: CurrentUser, session: DbSession
 ) -> TravelSpaceOut:
     """Move everything from another space into this one, then archive the other space."""
-    target = owned(session, TravelSpace, space_id, user.id)
-    source = owned(session, TravelSpace, payload.from_space_id, user.id)
+    target = owned(session, TravelSpace, space_id, user.id, Role.owner)
+    source = owned(session, TravelSpace, payload.from_space_id, user.id, Role.owner)
     if source.id == target.id:
         raise AppError(422, "Choose a different space to merge in.")
     merge_spaces(session, source, target)
@@ -164,14 +168,14 @@ def merge_space(
 @router.post("/travel-spaces/{space_id}/archive", status_code=204)
 def archive_space(space_id: UUID, user: CurrentUser, session: DbSession) -> None:
     """Archiving hides a space; nothing inside it is deleted, so it can be restored."""
-    space = owned(session, TravelSpace, space_id, user.id)
+    space = owned(session, TravelSpace, space_id, user.id, Role.owner)
     space.status = TravelSpaceStatus.archived
     session.commit()
 
 
 @router.post("/travel-spaces/{space_id}/restore", response_model=TravelSpaceOut)
 def restore_space(space_id: UUID, user: CurrentUser, session: DbSession, today: Today) -> TravelSpaceOut:
-    space = owned(session, TravelSpace, space_id, user.id)
+    space = owned(session, TravelSpace, space_id, user.id, Role.owner)
     if space.status == TravelSpaceStatus.archived:
         space.status = status_from_dates(space.start_date, space.end_date, today)
         session.commit()
@@ -184,17 +188,17 @@ def space_coverage(space_id: UUID, user: CurrentUser, session: DbSession) -> Sta
     space = owned(session, TravelSpace, space_id, user.id)
     bookings = list(
         session.scalars(
-            select(Booking).where(Booking.user_id == user.id, Booking.travel_space_id == space.id)
+            select(Booking).where(Booking.travel_space_id == space.id)
         ).all()
     )
     stays = list(
         session.scalars(
-            select(Stay).where(Stay.user_id == user.id, Stay.travel_space_id == space.id)
+            select(Stay).where(Stay.travel_space_id == space.id)
         ).all()
     )
     journeys = list(
         session.scalars(
-            select(Journey).where(Journey.user_id == user.id, Journey.travel_space_id == space.id)
+            select(Journey).where(Journey.travel_space_id == space.id)
         ).all()
     )
     coverage = compute_coverage(space.start_date, space.end_date, bookings, stays, journeys)
@@ -249,7 +253,8 @@ def stay_search(
 
 @router.post("/travel-spaces/{space_id}/prompts/dismiss", status_code=204)
 def dismiss_prompt(space_id: UUID, payload: PromptDismissIn, user: CurrentUser, session: DbSession) -> None:
-    owned(session, TravelSpace, space_id, user.id)
+    # Dismissals are personal, so a viewer may hide a prompt for themselves.
+    owned(session, TravelSpace, space_id, user.id, Role.viewer)
     existing = session.scalar(
         select(PromptDismissal).where(
             PromptDismissal.user_id == user.id,
@@ -275,7 +280,7 @@ def list_stays(space_id: UUID, user: CurrentUser, session: DbSession) -> list[St
     owned(session, TravelSpace, space_id, user.id)
     return list(
         session.scalars(
-            select(Stay).where(Stay.user_id == user.id, Stay.travel_space_id == space_id)
+            select(Stay).where(Stay.travel_space_id == space_id)
         ).all()
     )
 
@@ -338,7 +343,7 @@ def list_journeys(space_id: UUID, user: CurrentUser, session: DbSession) -> list
     return list(
         session.scalars(
             select(Journey)
-            .where(Journey.user_id == user.id, Journey.travel_space_id == space_id)
+            .where(Journey.travel_space_id == space_id)
             .order_by(Journey.depart_on)
         ).all()
     )

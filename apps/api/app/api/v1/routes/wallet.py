@@ -2,7 +2,7 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, File, Form, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
@@ -130,12 +130,12 @@ async def upload_document(
 
 
 @router.get("/wallet/documents/{document_id}/file")
-def document_file(document_id: UUID, user: CurrentUser, session: DbSession) -> FileResponse:
+def document_file(document_id: UUID, user: CurrentUser, session: DbSession) -> Response:
     row = owned(session, TravelDocument, document_id, user.id)
     if not row.file_key:
         raise AppError(404, "This document has no file attached.")
-    return FileResponse(
-        document_files.path_for(row.file_key),
+    return Response(
+        document_files.read(row.file_key),
         media_type=row.content_type or "application/octet-stream",
         headers={"Cache-Control": "private, no-store"},
     )

@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     ai_daily_request_limit: int = 30
 
     upload_dir: str = "./var/uploads"
+    # Private Supabase Storage bucket for wallet files. Set both to store files off-server.
+    supabase_service_key: str | None = None
+    storage_bucket: str = "documents"
     gmail_sync_limit: int = 60
 
     def cors_list(self) -> list[str]:
@@ -46,6 +49,8 @@ class Settings(BaseSettings):
             raise RuntimeError("Set JWT_SECRET before running in production.")
         if self.environment == "production" and not (self.supabase_url or self.supabase_jwt_secret):
             raise RuntimeError("Set SUPABASE_URL (or SUPABASE_JWT_SECRET) before running in production.")
+        if self.environment == "production" and not (self.supabase_url and self.supabase_service_key):
+            raise RuntimeError("Set SUPABASE_URL and SUPABASE_SERVICE_KEY so uploads survive deploys.")
 
 
 @lru_cache

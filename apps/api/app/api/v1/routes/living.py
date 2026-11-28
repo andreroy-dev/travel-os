@@ -74,12 +74,12 @@ def list_expenses(user: CurrentUser, session: DbSession, travel_space_id: UUID) 
     rows = list(
         session.scalars(
             select(Expense)
-            .where(Expense.user_id == user.id, Expense.travel_space_id == travel_space_id)
+            .where(Expense.travel_space_id == travel_space_id)
             .order_by(Expense.spent_on.desc())
         ).all()
     )
     splits = list(
-        session.scalars(select(ExpenseSplit).where(ExpenseSplit.user_id == user.id)).all()
+        session.scalars(select(ExpenseSplit).where(ExpenseSplit.expense_id.in_([r.id for r in rows]))).all()
     )
     grouped: dict = {}
     for split in splits:
@@ -134,7 +134,7 @@ def exchange_totals(
     home = preference.home_currency if preference else "USD"
     expenses = list(
         session.scalars(
-            select(Expense).where(Expense.user_id == user.id, Expense.travel_space_id == travel_space_id)
+            select(Expense).where(Expense.travel_space_id == travel_space_id)
         ).all()
     )
     if scope == "month":
@@ -160,7 +160,7 @@ def list_recurring(user: CurrentUser, session: DbSession, travel_space_id: UUID)
     return list(
         session.scalars(
             select(RecurringCost).where(
-                RecurringCost.user_id == user.id, RecurringCost.travel_space_id == travel_space_id
+                RecurringCost.travel_space_id == travel_space_id
             )
         ).all()
     )
@@ -228,7 +228,7 @@ def list_services(user: CurrentUser, session: DbSession, travel_space_id: UUID) 
     return list(
         session.scalars(
             select(LocalService).where(
-                LocalService.user_id == user.id, LocalService.travel_space_id == travel_space_id
+                LocalService.travel_space_id == travel_space_id
             )
         ).all()
     )
@@ -263,7 +263,7 @@ def list_neighbourhoods(user: CurrentUser, session: DbSession, travel_space_id: 
     return list(
         session.scalars(
             select(NeighbourhoodNote).where(
-                NeighbourhoodNote.user_id == user.id, NeighbourhoodNote.travel_space_id == travel_space_id
+                NeighbourhoodNote.travel_space_id == travel_space_id
             )
         ).all()
     )
@@ -303,7 +303,7 @@ def list_events(user: CurrentUser, session: DbSession, travel_space_id: UUID) ->
     return list(
         session.scalars(
             select(LocalEvent)
-            .where(LocalEvent.user_id == user.id, LocalEvent.travel_space_id == travel_space_id)
+            .where(LocalEvent.travel_space_id == travel_space_id)
             .order_by(LocalEvent.starts_on)
         ).all()
     )

@@ -1,3 +1,5 @@
+import hashlib
+import re
 import uuid
 from datetime import UTC, date, datetime
 
@@ -19,6 +21,35 @@ from app.services.extraction import ExtractedBooking, classify_email, extract_bo
 from app.services.itinerary_sync import sync_booking_itinerary
 
 
+_URL_RE = re.compile(r"https://[^\s<>\"')]+")
+
+
+def _first_url(body: str) -> str | None:
+    match = _URL_RE.search(body or "")
+    return match.group(0).rstrip(".,;")[:500] if match else None
+
+
+def compute_dedup_key(
+    provider: str | None,
+    confirmation_reference: str | None,
+    surname: str | None,
+    start: date | None,
+) -> str | None:
+    """Stable hash of provider + confirmation + surname + start date.
+
+    Needs a confirmation number; without one there is nothing reliable to match on.
+    """
+    if not confirmation_reference:
+        return None
+    parts = [
+        (provider or "").strip().lower(),
+        confirmation_reference.strip().upper(),
+        (surname or "").strip().lower(),
+        start.isoformat() if start else "",
+    ]
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
 class InboundMessage:
     def __init__(
         self,
@@ -30,6 +61,8 @@ class InboundMessage:
         integration_id: uuid.UUID | None = None,
         travel_space_id: uuid.UUID | None = None,
         date_window: tuple[date, date] | None = None,
+        sender_domain: str | None = None,
+        booking_url: str | None = None,
     ) -> None:
         self.external_id = external_id
         self.subject = subject[:500]
@@ -39,6 +72,8 @@ class InboundMessage:
         self.integration_id = integration_id
         self.travel_space_id = travel_space_id
         self.date_window = date_window
+        self.sender_domain = sender_domain.lower()[:255] if sender_domain else None
+        self.booking_url = booking_url or _first_url(body)
 
 
 class IngestResult:
@@ -280,7 +315,14 @@ def _apply_extracted(
     extracted: ExtractedBooking,
     classification: EmailClassification,
 ) -> Booking | None:
-    existing = _find_existing(session, user_id, extracted)
+    start_day = extracted.starts_at.date() if extracted.starts_at else None
+    key = compute_dedup_key(
+        extracted.provider,
+        extracted.confirmation_reference,
+        (extracted.details or {}).get("surname"),
+        start_day,
+    )
+    existing = _find_existing(session, user_id, extracted, key)
     if classification == EmailClassification.cancellation:
         if existing is None:
             return None
@@ -311,10 +353,19 @@ def _apply_extracted(
             confirmation_reference=extracted.confirmation_reference,
             status=extracted.status,
             source=message.source,
+            source_channel=message.source.value,
+            sender_domain=message.sender_domain,
+            booking_url=message.booking_url,
         )
         session.add(existing)
         session.flush()
+        near = _near_match(session, user_id, existing, start_day)
+        if near is not None:
+            existing.details = {**(existing.details or {}), "possible_duplicate_of": str(near.id)}
 
+    existing.dedup_key = key or existing.dedup_key
+    existing.booking_url = existing.booking_url or message.booking_url
+    existing.sender_domain = existing.sender_domain or message.sender_domain
     existing.category = extracted.category
     existing.provider = extracted.provider or existing.provider
     if extracted.confirmation_reference:
@@ -334,7 +385,11 @@ def _apply_extracted(
     elif not existing.notes and message.subject:
         existing.notes = message.subject[:500]
     if extracted.details:
-        existing.details = extracted.details
+        existing.details = {
+            **extracted.details,
+            **({"possible_duplicate_of": existing.details["possible_duplicate_of"]}
+               if existing.details and "possible_duplicate_of" in existing.details else {}),
+        }
     if extracted.price_amount is not None:
         existing.price_amount = extracted.price_amount
         existing.price_currency = extracted.price_currency
@@ -349,7 +404,13 @@ def _apply_extracted(
     return existing
 
 
-def _find_existing(session: Session, user_id: uuid.UUID, extracted: ExtractedBooking) -> Booking | None:
+def _find_existing(
+    session: Session, user_id: uuid.UUID, extracted: ExtractedBooking, key: str | None = None
+) -> Booking | None:
+    if key:
+        found = session.scalar(select(Booking).where(Booking.user_id == user_id, Booking.dedup_key == key))
+        if found is not None:
+            return found
     if not extracted.confirmation_reference:
         return None
     return session.scalar(
@@ -358,6 +419,24 @@ def _find_existing(session: Session, user_id: uuid.UUID, extracted: ExtractedBoo
             Booking.confirmation_reference == extracted.confirmation_reference,
         )
     )
+
+
+def _near_match(
+    session: Session, user_id: uuid.UUID, booking: Booking, start_day: date | None
+) -> Booking | None:
+    """Same provider and start day under a different confirmation: flag, never merge."""
+    if start_day is None or not booking.provider or booking.provider == "Unknown provider":
+        return None
+    for other in session.scalars(
+        select(Booking).where(
+            Booking.user_id == user_id,
+            Booking.id != booking.id,
+            Booking.provider == booking.provider,
+        )
+    ):
+        if other.starts_at and other.starts_at.date() == start_day:
+            return other
+    return None
 
 
 def _record(

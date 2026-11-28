@@ -56,10 +56,12 @@ def list_bookings(
     session: DbSession,
     travel_space_id: UUID | None = None,
 ) -> list[Booking]:
-    statement = select(Booking).where(Booking.user_id == user.id).order_by(Booking.starts_at)
     if travel_space_id is not None:
         owned(session, TravelSpace, travel_space_id, user.id)
-        statement = statement.where(Booking.travel_space_id == travel_space_id)
+        statement = select(Booking).where(Booking.travel_space_id == travel_space_id)
+    else:
+        statement = select(Booking).where(Booking.user_id == user.id)
+    statement = statement.order_by(Booking.starts_at)
     return list(session.scalars(statement).all())
 
 

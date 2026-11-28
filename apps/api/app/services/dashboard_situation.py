@@ -64,7 +64,7 @@ def build_situation(session: Session, user_id, space: TravelSpace | None, spaces
     out["total_days"] = (end - start).days + 1 if start and end else None
 
     bookings = list(
-        session.scalars(select(Booking).where(Booking.user_id == user_id, Booking.travel_space_id == space.id)).all()
+        session.scalars(select(Booking).where(Booking.travel_space_id == space.id)).all()
     )
     live = [b for b in bookings if b.status != BookingStatus.cancelled]
     out["bookings"] = {
@@ -73,9 +73,9 @@ def build_situation(session: Session, user_id, space: TravelSpace | None, spaces
     }
 
     if start and end:
-        stays = list(session.scalars(select(Stay).where(Stay.user_id == user_id, Stay.travel_space_id == space.id)).all())
+        stays = list(session.scalars(select(Stay).where(Stay.travel_space_id == space.id)).all())
         journeys = list(
-            session.scalars(select(Journey).where(Journey.user_id == user_id, Journey.travel_space_id == space.id)).all()
+            session.scalars(select(Journey).where(Journey.travel_space_id == space.id)).all()
         )
         coverage = compute_coverage(start, end, bookings, stays, journeys)
         tonight = next((n for n in coverage.nights if n.date == today), None)

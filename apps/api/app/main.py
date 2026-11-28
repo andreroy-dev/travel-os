@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.permissions import request_is_write
 from app.api.v1.router import router
 from app.core.config import get_settings
 from app.core.database import get_engine
@@ -21,9 +22,27 @@ async def lifespan(app: FastAPI):
     yield
 
 
+class WriteIntentMiddleware:
+    """Tell the permission helper whether this request reads or changes data."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http":
+            token = request_is_write.set(scope["method"] not in ("GET", "HEAD", "OPTIONS"))
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                request_is_write.reset(token)
+        else:
+            await self.app(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="Travel OS", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(WriteIntentMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_list(),

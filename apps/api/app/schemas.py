@@ -1,9 +1,10 @@
 import json
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.models.entities import (
     BookingCategory,
@@ -52,10 +53,28 @@ class PreferenceIn(BaseModel):
     accommodation_preferences: list[str] = Field(default_factory=list)
     accessibility_notes: str | None = None
     notifications_enabled: bool = True
+    home_country: str | None = Field(default=None, pattern=r"^[A-Za-z]{2}$")
+    residency_country: str | None = Field(default=None, pattern=r"^[A-Za-z]{2}$")
+    passport_nationality: str | None = Field(default=None, pattern=r"^[A-Za-z]{2}$")
+    trip_type: Literal["holiday", "long_term", "living_abroad", "mixed"] | None = None
+    pace: Literal["relaxed", "balanced", "packed"] | None = None
+    climate: Literal["warm", "mild", "cold", "any"] | None = None
+    available_time: str | None = Field(default=None, max_length=32)
+    provider_priority: Literal["home", "destination"] | None = None
+
+    @field_validator("home_country", "residency_country", "passport_nationality")
+    @classmethod
+    def _upper(cls, value: str | None) -> str | None:
+        return value.upper() if value else value
 
 
 class PreferenceOut(PreferenceIn):
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def onboarding_complete(self) -> bool:
+        return bool(self.home_country and self.passport_nationality)
 
 
 class TravelSpaceIn(BaseModel):

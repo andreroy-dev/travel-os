@@ -82,7 +82,8 @@ def update_preferences(payload: PreferenceIn, user: CurrentUser, session: DbSess
     if preference is None:
         preference = UserPreference(user_id=user.id)
         session.add(preference)
-    for field, value in payload.model_dump().items():
+    # Only fields the client sent change, so an older app build never wipes the new profile fields.
+    for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(preference, field, value)
     session.commit()
     return preference

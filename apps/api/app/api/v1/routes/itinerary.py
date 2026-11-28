@@ -21,9 +21,10 @@ def read_itinerary(
 ) -> ItineraryViewOut:
     if travel_space_id is not None:
         owned(session, TravelSpace, travel_space_id, user.id)
-    statement = select(ItineraryItem).where(ItineraryItem.user_id == user.id)
     if travel_space_id is not None:
-        statement = statement.where(ItineraryItem.travel_space_id == travel_space_id)
+        statement = select(ItineraryItem).where(ItineraryItem.travel_space_id == travel_space_id)
+    else:
+        statement = select(ItineraryItem).where(ItineraryItem.user_id == user.id)
     items = list(
         session.scalars(statement.order_by(ItineraryItem.starts_on, ItineraryItem.starts_at)).all()
     )

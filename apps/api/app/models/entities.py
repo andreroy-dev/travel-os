@@ -163,6 +163,15 @@ class UserPreference(Base):
     accommodation_preferences: Mapped[list] = mapped_column(JSON, default=list)
     accessibility_notes: Mapped[str | None] = mapped_column(Text)
     notifications_enabled: Mapped[bool] = mapped_column(default=True)
+    # Onboarding profile (PRD v3 C1). Countries are ISO 3166-1 alpha-2.
+    home_country: Mapped[str | None] = mapped_column(String(2))
+    residency_country: Mapped[str | None] = mapped_column(String(2))
+    passport_nationality: Mapped[str | None] = mapped_column(String(2))
+    trip_type: Mapped[str | None] = mapped_column(String(16))
+    pace: Mapped[str | None] = mapped_column(String(16))
+    climate: Mapped[str | None] = mapped_column(String(16))
+    available_time: Mapped[str | None] = mapped_column(String(32))
+    provider_priority: Mapped[str | None] = mapped_column(String(16))
 
     user: Mapped[User] = relationship(back_populates="preference")
 
@@ -212,6 +221,33 @@ class TravelSpace(Base):
     )
 
     destination: Mapped[Destination | None] = relationship()
+
+
+class TripRole(str, enum.Enum):
+    owner = "owner"
+    editor = "editor"
+    contributor = "contributor"
+    viewer = "viewer"
+
+
+class TripMember(Base):
+    """A person on a trip. The creator always has an owner row."""
+
+    __tablename__ = "trip_members"
+    __table_args__ = (UniqueConstraint("travel_space_id", "user_id", name="uq_trip_member"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    travel_space_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("travel_spaces.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[TripRole] = mapped_column(enum_column(TripRole), default=TripRole.viewer)
+    invited_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL")
+    )
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Stay(Base):
@@ -331,6 +367,10 @@ class Booking(Base):
     cancellation_policy: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict | None] = mapped_column(JSON)
+    source_channel: Mapped[str | None] = mapped_column(String(32))
+    sender_domain: Mapped[str | None] = mapped_column(String(255))
+    booking_url: Mapped[str | None] = mapped_column(String(500))
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

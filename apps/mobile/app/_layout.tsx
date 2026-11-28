@@ -1,5 +1,5 @@
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { Platform, View } from 'react-native';
@@ -8,7 +8,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SignInScreen from '@/app/sign-in';
 import { serif, theme } from '@/components/ui';
+import { api } from '@/lib/api';
+import { onboardingWasSkipped } from '@/lib/onboarding';
 import { useSession, SessionProvider } from '@/lib/session';
+import type { Preferences } from '@/lib/types';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -48,6 +51,22 @@ export default function RootLayout() {
 
 function RootNavigator() {
   const { ready, token } = useSession();
+  const router = useRouter();
+
+  // New accounts answer a few profile questions first (skippable per launch).
+  useEffect(() => {
+    if (!ready || !token || onboardingWasSkipped()) return;
+    let active = true;
+    api<Preferences>('/preferences', { token })
+      .then((prefs) => {
+        if (active && prefs.onboarding_complete === false) router.replace('/onboarding' as never);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [ready, token, router]);
+
   if (!ready) return <View style={{ flex: 1, backgroundColor: theme.paper }} />;
   if (!token) return <SignInScreen />;
 
@@ -68,6 +87,7 @@ function RootNavigator() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="sign-in" options={{ headerShown: false }} />
         <Stack.Screen name="auth-callback" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ title: 'About you' }} />
         <Stack.Screen name="new-space" options={{ title: 'New space', presentation: 'modal', animation: 'slide_from_bottom' }} />
         <Stack.Screen name="spaces/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="new-booking" options={{ title: 'Add booking', presentation: 'modal', animation: 'slide_from_bottom' }} />

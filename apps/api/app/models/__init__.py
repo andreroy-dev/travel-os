@@ -20,6 +20,8 @@ from app.models.entities import (
     SavedPlace,
     Stay,
     TravelSpace,
+    TripMember,
+    TripRole,
     User,
     UserPreference,
 )
@@ -68,6 +70,8 @@ __all__ = [
     "Stay",
     "TravelDocument",
     "TripBudget",
+    "TripMember",
+    "TripRole",
     "TravelSpace",
     "User",
     "UserPreference",
