@@ -4,7 +4,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Pasted dashboard values often carry a stray space or newline; Google then rejects the client ID.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", str_strip_whitespace=True)
 
     environment: str = "development"
     database_url: str = "sqlite:///./travelos.db"
