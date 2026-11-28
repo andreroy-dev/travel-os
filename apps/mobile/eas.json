@@ -16,14 +16,14 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.REPLACE-WITH-DOMAIN"
+        "EXPO_PUBLIC_API_URL": "https://travel-os-mh5v.onrender.com"
       }
     },
     "production": {
       "autoIncrement": true,
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.REPLACE-WITH-DOMAIN"
+        "EXPO_PUBLIC_API_URL": "https://travel-os-mh5v.onrender.com"
       }
     }
   },

@@ -45,6 +45,9 @@ class Settings(BaseSettings):
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
 
     def ensure_production_safe(self) -> None:
+        # Hosts like Render wipe the local disk on every deploy, so a SQLite file would lose all data.
+        if self.environment == "production" and self.database_url.startswith("sqlite"):
+            raise RuntimeError("Set DATABASE_URL to the Postgres connection string before running in production.")
         if self.environment == "production" and self.jwt_secret == "dev-only-change-me":
             raise RuntimeError("Set JWT_SECRET before running in production.")
         if self.environment == "production" and not (self.supabase_url or self.supabase_jwt_secret):
