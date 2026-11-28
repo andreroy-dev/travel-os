@@ -70,6 +70,11 @@ Never commit a secret. The `service_role` key bypasses row level security and mu
   `production` profiles in `apps/mobile/eas.json` point here until a custom domain exists.
 - Gmail sign-in returns to `https://travel-os-mh5v.onrender.com/api/v1/integrations/gmail/callback`. Put that in
   `GOOGLE_REDIRECT_URI` on Render and in the Google Cloud OAuth client's authorized redirect URIs.
+- Supabase Auth > URL Configuration: Site URL `travelos://`, Redirect URLs must include `travelos://**`. Google
+  sign-in always returns to `travelos://auth-callback`, also in Expo Go: Supabase refuses `exp://` addresses, and the
+  iOS sign-in sheet catches `travelos://` without the scheme being installed (Android Expo Go cannot finish it).
+- Sign in with Apple: enable the Apple provider in Supabase with Client IDs `host.exp.Exponent,com.travelos.app`
+  (the first is Expo Go, the second the real app).
 - If the service was created as a plain Web Service rather than from the Blueprint, set Language **Docker**,
   Root Directory **`apps/api`** and Health Check Path **`/api/v1/health`** in its Settings, or the build cannot find the Dockerfile.
 

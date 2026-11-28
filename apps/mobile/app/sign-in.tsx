@@ -1,8 +1,7 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
-import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Appear } from '@/components/motion';
 import { Button, ErrorNote, Field, serif, theme } from '@/components/ui';
@@ -77,7 +76,10 @@ export default function SignInScreen() {
   const google = () =>
     run('google', async () => {
       if (!supabase) return;
-      const redirectTo = Linking.createURL('auth-callback');
+      // Always return to the app's own scheme, even in Expo Go: Supabase refuses exp:// redirect
+      // URLs, and the iOS sign-in sheet catches travelos:// itself without the scheme being installed.
+      // Supabase must allow it under Authentication > URL Configuration > Redirect URLs (travelos://**).
+      const redirectTo = 'travelos://auth-callback';
       const { data, error: failure } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo, skipBrowserRedirect: true },
@@ -85,10 +87,23 @@ export default function SignInScreen() {
       if (failure || !data.url) throw failure ?? new Error('Google sign-in is not available.');
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
       if (result.type !== 'success') return;
-      const authCode = new URL(result.url).searchParams.get('code');
-      if (!authCode) throw new Error('Google sign-in was not completed.');
-      const { error: exchange } = await supabase.auth.exchangeCodeForSession(authCode);
-      if (exchange) throw exchange;
+      const returned = new URL(result.url);
+      const params = new URLSearchParams(returned.hash.replace(/^#/, ''));
+      returned.searchParams.forEach((value, key) => params.set(key, value));
+      const problem = params.get('error_description') ?? params.get('error');
+      if (problem) throw new Error(problem);
+      const authCode = params.get('code');
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+      if (authCode) {
+        const { error: exchange } = await supabase.auth.exchangeCodeForSession(authCode);
+        if (exchange) throw exchange;
+      } else if (accessToken && refreshToken) {
+        const { error: restore } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+        if (restore) throw restore;
+      } else {
+        throw new Error('Google sign-in was not completed.');
+      }
     });
 
   const devSignIn = () =>
@@ -102,7 +117,13 @@ export default function SignInScreen() {
     });
 
   return (
-    <View style={styles.page}>
+    <KeyboardAvoidingView style={styles.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets={false}
+      >
       <Appear>
       <View style={styles.column}>
         <Text style={styles.mark}>Travel OS</Text>
@@ -156,7 +177,8 @@ export default function SignInScreen() {
         <ErrorNote message={error} />
       </View>
       </Appear>
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -166,11 +188,11 @@ const styles = StyleSheet.create({
     width: '100%',
     minHeight: Platform.OS === 'web' ? '100vh' : undefined,
     backgroundColor: theme.paper,
-    padding: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
-  column: { width: '100%', maxWidth: 460, gap: 14 },
+  // Children stretch to the screen width; the column centres itself. Centring with alignItems here made the
+  // animated wrapper shrink to its content, so the 100%-wide column overflowed the screen on the left.
+  scroll: { flexGrow: 1, padding: 24, justifyContent: 'center' },
+  column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: 14 },
   mark: { fontFamily: serif, fontSize: 42, color: theme.ink },
   lead: { color: theme.muted, fontSize: 17, lineHeight: 24, marginBottom: 8 },
   apple: { width: '100%', height: 50 },
